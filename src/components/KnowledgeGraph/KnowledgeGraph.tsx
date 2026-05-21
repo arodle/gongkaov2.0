@@ -662,7 +662,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
 
       {selectedNode && (
         <Sheet open={!!selectedNode} onOpenChange={(open) => !open && setSelectedNode(null)}>
-          <SheetContent className="w-[400px] sm:w-[540px]">
+          <SheetContent className="w-[400px] sm:w-[540px] flex flex-col">
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2 relative">
                 <span>{selectedNode.name}</span>
@@ -692,6 +692,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
                 )}
               </SheetTitle>
             </SheetHeader>
+            <ScrollArea className="flex-1 min-h-0">
             <div className="mt-6 space-y-6">
               <div className="space-y-2">
                 <h4 className="text-sm font-medium">掌握进度</h4>
@@ -716,18 +717,22 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
               {selectedNode.content && (
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">知识点说明</h4>
-                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
-                    {selectedNode.content}
-                  </p>
+                  <div className="max-h-40 overflow-auto">
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+                      {selectedNode.content}
+                    </p>
+                  </div>
                 </div>
               )}
 
               {selectedNode.annotation && (
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">学习笔记</h4>
-                  <p className="text-sm text-amber-600 dark:text-amber-400 italic whitespace-pre-wrap break-words">
-                    {selectedNode.annotation}
-                  </p>
+                  <div className="max-h-40 overflow-auto">
+                    <p className="text-sm text-amber-600 dark:text-amber-400 italic whitespace-pre-wrap break-words">
+                      {selectedNode.annotation}
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -772,6 +777,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
                 </div>
               </div>
             </div>
+            </ScrollArea>
           </SheetContent>
         </Sheet>
       )}

@@ -531,7 +531,7 @@ export function CenterDashboard() {
         </p>
       </div>
 
-      <ScrollArea className="h-[calc(100vh-120px)]">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-6 pt-2 space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-red-200 dark:border-red-800">

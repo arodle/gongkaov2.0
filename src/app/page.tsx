@@ -286,11 +286,11 @@ function AppContent() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="h-full"
+              className="h-full min-h-0"
             >
-              <div className="h-full flex flex-col">
+              <div className="h-full flex flex-col min-h-0">
                 {/* View Toggle */}
-                <div className="p-3 border-b bg-white/50 dark:bg-slate-900/50">
+                <div className="p-3 border-b bg-white/50 dark:bg-slate-900/50 shrink-0">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Button
@@ -350,9 +350,9 @@ function AppContent() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
-              <ScrollArea className="h-[calc(100vh-180px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <div className="max-w-4xl mx-auto py-8 px-4">
                   <div className="text-center mb-8">
                     <h2 className="text-2xl font-bold mb-2">选择练习模式</h2>
@@ -461,9 +461,9 @@ function AppContent() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
-              <ScrollArea className="h-[calc(100vh-180px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <div className="max-w-2xl mx-auto py-8 px-4">
                   <PracticeSession
                     questions={getPracticeQuestions()}
@@ -484,7 +484,7 @@ function AppContent() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
               <QuestionBankManager />
             </motion.div>
@@ -497,9 +497,9 @@ function AppContent() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
-              <div className="flex flex-col h-full">
+              <div className="flex flex-col h-full min-h-0">
                 <div className="p-3 border-b bg-white/50 dark:bg-slate-900/50 shrink-0">
                   <h3 className="font-semibold">双栏错题本</h3>
                   <p className="text-xs text-muted-foreground">左侧展示错题，右侧编辑笔记，绑定完整知识层级标签</p>
@@ -518,7 +518,7 @@ function AppContent() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
               <ReportDashboard />
             </motion.div>
@@ -531,7 +531,7 @@ function AppContent() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="h-full flex flex-col"
+              className="h-full flex flex-col min-h-0"
             >
               <CenterDashboard />
             </motion.div>

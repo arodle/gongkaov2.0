@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { KnowledgeNodeRecord, QuestionBankItem } from '@/types';
@@ -277,6 +277,28 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
   });
   const [showSidebar, setShowSidebar] = useState(true);
   const [showOnlyWeak, setShowOnlyWeak] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const isResizing = useRef(false);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isResizing.current) return;
+      const newWidth = Math.max(240, Math.min(600, ev.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizing.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, []);
 
   useEffect(() => {
     if (nodes.length > 0 && expandedNodes.size === 0) {
@@ -398,7 +420,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
         id: `${addForm.type}_${Date.now()}`,
         user_id: CURRENT_USER_ID,
         name: addForm.name,
-        parent_id: addParentId,
+        parent_id: addParentId || null,
         pos_x: parentNode ? parentNode.pos_x + 200 : 0,
         pos_y: parentNode ? parentNode.pos_y + 100 : 0,
         ps_score: 50,
@@ -487,17 +509,17 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
   }
 
   return (
-    <div className={cn('flex h-full', className)}>
+    <div className={cn('flex h-full min-h-0', className)}>
       <AnimatePresence>
         {showSidebar && (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 320, opacity: 1 }}
+            animate={{ width: sidebarWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="border-r bg-background flex flex-col"
+            className="border-r bg-background flex flex-col min-h-0 shrink-0 relative"
           >
-            <div className="p-3 border-b space-y-2">
+            <div className="p-3 border-b space-y-2 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -527,13 +549,13 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                   <ChevronRight className="h-3 w-3 mr-1" />
                   折叠
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => handleAddChild(null!)}>
+                <Button variant="outline" size="sm" onClick={() => handleAddChild('')}>
                   <FolderPlus className="h-3 w-3" />
                 </Button>
               </div>
             </div>
 
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               <div className="p-2">
                 {rootNodes.map((node) => (
                   <NodeTreeItem
@@ -555,12 +577,17 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                 ))}
               </div>
             </ScrollArea>
+
+            <div
+              className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors z-10"
+              onMouseDown={handleResizeStart}
+            />
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col">
-        <div className="p-3 border-b flex items-center justify-between">
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="p-3 border-b flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -579,7 +606,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
           </div>
         </div>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-6">
             {selectedNode ? (
               <div className="max-w-3xl mx-auto space-y-6">
@@ -614,7 +641,9 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                     {selectedNode.content && (
                       <div>
                         <h4 className="text-sm font-medium mb-2 text-muted-foreground">内容</h4>
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{selectedNode.content}</p>
+                        <div className="max-h-48 overflow-auto rounded-md border">
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words p-2">{selectedNode.content}</p>
+                        </div>
                       </div>
                     )}
 
@@ -624,7 +653,9 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                           <AlertTriangle className="h-4 w-4 text-amber-600" />
                           <h4 className="text-sm font-medium text-amber-800 dark:text-amber-200">学习笔记</h4>
                         </div>
-                        <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap break-words">{selectedNode.annotation}</p>
+                        <div className="max-h-48 overflow-auto rounded">
+                          <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap break-words">{selectedNode.annotation}</p>
+                        </div>
                       </div>
                     )}
 
