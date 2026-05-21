@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getMindMaps,
+  getKnowledgeNodes,
   upsertMindMap,
   getQuestions,
   upsertQuestions,
@@ -12,10 +13,11 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id') || 'default';
+    const userId = request.headers.get('x-user-id') || 'default_user';
 
-    const [mindMaps, questions, answers, practiceSets] = await Promise.all([
+    const [mindMaps, knowledgeNodes, questions, answers, practiceSets] = await Promise.all([
       getMindMaps(userId),
+      getKnowledgeNodes(userId),
       getQuestions(userId),
       getAnswerRecords(userId),
       getPracticeSets(userId),
@@ -25,6 +27,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         mindMaps: mindMaps ?? [],
+        knowledgeNodes: knowledgeNodes ?? [],
         questions: questions ?? [],
         answers: answers ?? [],
         practiceSets: practiceSets ?? [],

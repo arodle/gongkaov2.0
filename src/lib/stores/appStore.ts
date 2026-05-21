@@ -73,19 +73,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   initialize: async () => {
     try {
       let nodes = await getNodesByUser();
+      let questionBankItems: QuestionBankItem[] = [];
 
-      if (nodes.length === 0) {
+      const neonResult = await fetchFromNeon();
+
+      if (neonResult.nodes.length > 0) {
+        if (nodes.length > 0) {
+          const existingIds = new Set(nodes.map(n => n.id));
+          const neonIds = new Set(neonResult.nodes.map(n => n.id));
+          const hasDifferentData = neonResult.nodes.some(n => !existingIds.has(n.id))
+            || nodes.some(n => !neonIds.has(n.id));
+
+          if (hasDifferentData) {
+            await db.knowledge_nodes.clear();
+            await db.knowledge_nodes.bulkAdd(neonResult.nodes);
+            nodes = neonResult.nodes;
+          }
+        } else {
+          nodes = neonResult.nodes;
+        }
+        questionBankItems = neonResult.questionBank;
+      } else if (nodes.length === 0) {
         const result = await seedInitialData();
         nodes = await getNodesByUser();
-        set({ questionBank: result.questionBank });
+        questionBankItems = result.questionBank;
       } else {
         const { SAMPLE_QUESTION_BANK } = await import('@/lib/sample-data');
-        // 确保所有题目都有images字段
-        const questionBankWithImages = SAMPLE_QUESTION_BANK.map(q => ({
+        questionBankItems = SAMPLE_QUESTION_BANK.map(q => ({
           ...q,
           images: q.images || []
         }));
-        set({ questionBank: questionBankWithImages });
       }
 
       const records = await db.practice_records.where('user_id').equals(CURRENT_USER_ID).toArray();
@@ -93,6 +110,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set({
         nodes,
+        questionBank: questionBankItems,
         practiceRecords: records,
         psHistory: history,
         isInitialized: true,
@@ -274,6 +292,90 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 }));
+
+interface NeonSyncNode {
+  id: string;
+  user_id: string;
+  name: string;
+  node_type: string;
+  content?: string;
+  annotation?: string;
+  parent_id: string | null;
+  pos_x: number;
+  pos_y: number;
+  ps_score: number;
+  last_practiced_at: string | null;
+  color_tag: string;
+}
+
+interface NeonSyncQuestion {
+  id: string;
+  question_text: string;
+  option_a: string;
+  option_b: string;
+  option_c: string;
+  option_d: string;
+  correct_answer: string;
+  explanation?: string;
+  knowledge_path?: string;
+  linked_angle_id?: string;
+  source?: string;
+  type?: string;
+  reference?: string;
+}
+
+async function fetchFromNeon() {
+  try {
+    const response = await fetch('/api/sync');
+    if (!response.ok) return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+
+    const json = await response.json();
+    if (!json.success) return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+
+    const knowledgeNodes: NeonSyncNode[] = json.data?.knowledgeNodes ?? [];
+    const questions: NeonSyncQuestion[] = json.data?.questions ?? [];
+
+    const nodes: KnowledgeNodeRecord[] = knowledgeNodes.map(n => ({
+      id: n.id,
+      user_id: n.user_id || CURRENT_USER_ID,
+      name: n.name,
+      parent_id: n.parent_id,
+      pos_x: n.pos_x,
+      pos_y: n.pos_y,
+      ps_score: n.ps_score,
+      last_practiced_at: n.last_practiced_at,
+      color_tag: n.color_tag || 'default',
+      node_type: n.node_type as 'subject' | 'knowledge' | 'subknowledge' | 'angle',
+      content: n.content,
+      annotation: n.annotation,
+      updated_at: new Date().toISOString(),
+    }));
+
+    const questionBankItems: QuestionBankItem[] = questions.map(q => ({
+      id: q.id,
+      content: q.question_text,
+      options: [
+        { label: 'A', text: q.option_a || '' },
+        { label: 'B', text: q.option_b || '' },
+        { label: 'C', text: q.option_c || '' },
+        { label: 'D', text: q.option_d || '' },
+      ],
+      correctAnswer: q.correct_answer,
+      explanation: q.explanation || '',
+      images: [],
+      linkedAngleId: q.linked_angle_id || '',
+      linkedAngleName: '',
+      knowledgePath: q.knowledge_path,
+      source: q.source,
+      reference: q.reference,
+      createdAt: new Date().toISOString(),
+    }));
+
+    return { nodes, questionBank: questionBankItems };
+  } catch {
+    return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+  }
+}
 
 async function seedInitialData() {
   const { SAMPLE_MIND_MAP } = await import('@/lib/sample-data');

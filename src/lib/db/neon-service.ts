@@ -5,7 +5,21 @@ neonConfig.fetchConnectionCache = true;
 
 const sql = neon(process.env.DATABASE_URL!);
 
-export async function getMindMaps(userId: string = 'default') {
+const DEFAULT_USER_ID = 'default_user';
+
+export async function getKnowledgeNodes(userId: string = DEFAULT_USER_ID) {
+  const result = await sql`
+    SELECT id, user_id, name, parent_id, pos_x, pos_y, ps_score,
+           last_practiced_at, color_tag, node_type, content, annotation,
+           created_at, updated_at
+    FROM knowledge_nodes
+    WHERE user_id = ${userId}
+    ORDER BY updated_at DESC
+  `;
+  return result;
+}
+
+export async function getMindMaps(userId: string = DEFAULT_USER_ID) {
   const result = await sql`
     SELECT id, name, data, created_at, updated_at
     FROM mind_maps
@@ -32,11 +46,11 @@ export async function upsertMindMap(
   return result[0]?.id;
 }
 
-export async function getQuestions(userId: string = 'default') {
+export async function getQuestions(userId: string = DEFAULT_USER_ID) {
   const result = await sql`
     SELECT id, question_text, option_a, option_b, option_c, option_d, 
            correct_answer, explanation, knowledge_path, linked_angle_id, 
-           source, mind_map_id, created_at
+           source, mind_map_id, type, reference, created_at
     FROM question_bank
     WHERE user_id = ${userId}
     ORDER BY created_at DESC
@@ -86,7 +100,7 @@ export async function upsertQuestions(
   return questions.length;
 }
 
-export async function getAnswerRecords(userId: string = 'default', limit: number = 5000) {
+export async function getAnswerRecords(userId: string = DEFAULT_USER_ID, limit: number = 5000) {
   const result = await sql`
     SELECT id, question_id, selected_answer, is_correct, practice_mode, practice_set_id, created_at
     FROM answer_records
@@ -120,7 +134,7 @@ export async function insertAnswerRecords(
   return answers.length;
 }
 
-export async function getPracticeSets(userId: string = 'default') {
+export async function getPracticeSets(userId: string = DEFAULT_USER_ID) {
   const result = await sql`
     SELECT id, name, description, question_ids, mode, time_limit, created_at
     FROM practice_sets
