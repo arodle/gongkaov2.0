@@ -614,7 +614,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                     {selectedNode.content && (
                       <div>
                         <h4 className="text-sm font-medium mb-2 text-muted-foreground">内容</h4>
-                        <p className="text-sm leading-relaxed">{selectedNode.content}</p>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{selectedNode.content}</p>
                       </div>
                     )}
 
@@ -624,7 +624,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                           <AlertTriangle className="h-4 w-4 text-amber-600" />
                           <h4 className="text-sm font-medium text-amber-800 dark:text-amber-200">学习笔记</h4>
                         </div>
-                        <p className="text-sm text-amber-700 dark:text-amber-300">{selectedNode.annotation}</p>
+                        <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap break-words">{selectedNode.annotation}</p>
                       </div>
                     )}
 

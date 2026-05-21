@@ -512,7 +512,7 @@ export function QuestionBankManager() {
                             {question.knowledgePath || getLinkedNodeName(question.linkedAngleId)}
                           </span>
                         </div>
-                        <p className="text-sm line-clamp-2 mb-2">{question.content}</p>
+                        <p className="text-sm line-clamp-2 mb-2 whitespace-pre-wrap break-words">{question.content}</p>
                         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                           {question.options.map((opt) => (
                             <span
@@ -533,7 +533,7 @@ export function QuestionBankManager() {
                               <Lightbulb className="h-3 w-3" />
                               <span>解析</span>
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">{question.explanation}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap break-words">{question.explanation}</p>
                           </div>
                         )}
                         
@@ -928,7 +928,7 @@ export function QuestionBankManager() {
                           )}
                           onClick={() => handleToggleQuestionSelection(question.id)}
                         >
-                          <p className="text-sm line-clamp-2">{question.content}</p>
+                          <p className="text-sm line-clamp-2 whitespace-pre-wrap break-words">{question.content}</p>
                           <p className="text-xs text-muted-foreground mt-1">
                             正确答案: {question.correctAnswer}
                           </p>

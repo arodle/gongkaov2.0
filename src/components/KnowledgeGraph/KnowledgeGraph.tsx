@@ -716,7 +716,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
               {selectedNode.content && (
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">知识点说明</h4>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
+                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
                     {selectedNode.content}
                   </p>
                 </div>
@@ -725,7 +725,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
               {selectedNode.annotation && (
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">学习笔记</h4>
-                  <p className="text-sm text-amber-600 dark:text-amber-400 italic">
+                  <p className="text-sm text-amber-600 dark:text-amber-400 italic whitespace-pre-wrap break-words">
                     {selectedNode.annotation}
                   </p>
                 </div>

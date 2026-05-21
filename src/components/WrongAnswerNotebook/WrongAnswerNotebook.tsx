@@ -539,7 +539,7 @@ export function WrongAnswerNotebook() {
                       <Lightbulb className="h-3 w-3 text-amber-600" />
                       <span className="text-xs font-medium text-amber-700 dark:text-amber-300">解析</span>
                     </div>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                       {selectedItem.explanation}
                     </p>
                     {selectedItem.images && selectedItem.images.length > 0 && (
