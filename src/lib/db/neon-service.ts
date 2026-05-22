@@ -1,9 +1,8 @@
 import 'dotenv/config';
 import { neon, neonConfig } from '@neondatabase/serverless';
 
-neonConfig.fetchConnectionCache = true;
-
 const sql = neon(process.env.DATABASE_URL!);
+export { sql };
 
 const DEFAULT_USER_ID = 'default_user';
 
