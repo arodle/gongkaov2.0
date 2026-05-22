@@ -182,6 +182,7 @@ export function WrongAnswerNotebook() {
   const [editingNote, setEditingNote] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [showNotePanel, setShowNotePanel] = useState(true);
+  const [showDrawer, setShowDrawer] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(EXPANDED_KEY);
@@ -389,8 +390,86 @@ export function WrongAnswerNotebook() {
   }, [selectedId, expandedItems]);
 
   return (
-    <div className="h-full flex">
-      <div className={cn("flex flex-col", showNotePanel ? "w-1/2" : "w-full")}>
+    <div className="h-screen w-screen flex flex-col md:flex-row overflow-hidden">
+      <Sheet open={showDrawer} onOpenChange={setShowDrawer}>
+        <SheetContent side="left" className="w-[320px] sm:w-[360px]">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <ListTodo className="h-4 w-4" />
+              错题列表
+              <Badge variant="outline" className="text-xs">{stats.total}</Badge>
+            </SheetTitle>
+          </SheetHeader>
+          
+          <div className="mt-4 space-y-3">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="搜索错题..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-7 h-8 text-xs"
+              />
+            </div>
+
+            <select
+              value={filterNode}
+              onChange={(e) => setFilterNode(e.target.value)}
+              className="w-full text-xs border rounded px-2 py-1.5 bg-background"
+            >
+              <option value="all">全部知识点</option>
+              {weakNodes.map(node => (
+                <option key={node.id} value={node.id}>
+                  {node.name}
+                </option>
+              ))}
+            </select>
+
+            <Button variant="outline" size="sm" onClick={handleExportWrongAnswers} className="w-full h-8 text-xs">
+              <Download className="h-3 w-3 mr-1" />
+              导出错题
+            </Button>
+          </div>
+
+          <ScrollArea className="mt-4 h-[calc(100%-140px)]">
+            {filteredWrongAnswers.length > 0 ? (
+              <div className="py-2">
+                {filteredWrongAnswers.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      handleSelectItem(item.id);
+                      setShowDrawer(false);
+                    }}
+                    className={cn(
+                      'p-3 cursor-pointer border-b transition-colors',
+                      selectedId === item.id ? 'bg-primary/5' : 'hover:bg-muted/50'
+                    )}
+                  >
+                    <p className="text-sm line-clamp-2">{item.questionContent}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant="outline" className="text-xs">{item.linkedAngleName}</Badge>
+                      <span className="text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6">
+                <CheckCircle2 className="h-12 w-12 text-green-500/30 mb-3" />
+                <h3 className="text-base font-medium mb-1">太棒了！</h3>
+                <p className="text-xs text-muted-foreground">
+                  {debouncedSearch || filterNode !== 'all'
+                    ? '没有找到符合条件的错题'
+                    : '暂无错题记录，继续保持！'}
+                </p>
+              </div>
+            )}
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
+
+      <div className="hidden md:flex flex-col w-1/2 border-r">
         <div className="p-3 border-b space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -398,26 +477,10 @@ export function WrongAnswerNotebook() {
               <h3 className="font-semibold text-sm">错题列表</h3>
               <Badge variant="outline" className="text-xs">{stats.total}</Badge>
             </div>
-            <div className="flex items-center gap-1">
-              {selectedItem && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowNotePanel(!showNotePanel)}
-                  className="h-7 px-2"
-                >
-                  {showNotePanel ? (
-                    <PanelRightClose className="h-4 w-4" />
-                  ) : (
-                    <PanelRightOpen className="h-4 w-4" />
-                  )}
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={handleExportWrongAnswers} className="h-7 text-xs">
-                <Download className="h-3 w-3 mr-1" />
-                导出
-              </Button>
-            </div>
+            <Button variant="outline" size="sm" onClick={handleExportWrongAnswers} className="h-7 text-xs">
+              <Download className="h-3 w-3 mr-1" />
+              导出
+            </Button>
           </div>
 
           <div className="relative">
@@ -472,15 +535,37 @@ export function WrongAnswerNotebook() {
         </ScrollArea>
       </div>
 
-      <AnimatePresence>
-        {showNotePanel && selectedItem && (
-          <motion.div
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: '50%', opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            className="border-l flex flex-col bg-background"
-          >
-            <div className="p-3 border-b flex items-center justify-between">
+      <div className="flex-1 flex flex-col w-full max-w-full overflow-hidden px-0 md:px-0">
+        {selectedItem ? (
+          <>
+            <div className="flex items-center justify-between p-3 border-b md:hidden">
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="icon" onClick={() => setShowDrawer(true)} className="h-8 w-8">
+                  <ListTodo className="h-4 w-4" />
+                </Button>
+                <h3 className="font-semibold text-sm">错题笔记</h3>
+              </div>
+              <Button
+                variant={isEditing ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => isEditing ? handleSaveNote() : setIsEditing(true)}
+                className="h-7 text-xs"
+              >
+                {isEditing ? (
+                  <>
+                    <Save className="h-3 w-3 mr-1" />
+                    保存
+                  </>
+                ) : (
+                  <>
+                    <Edit3 className="h-3 w-3 mr-1" />
+                    编辑
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="hidden md:flex items-center justify-between p-3 border-b">
               <div className="flex items-center gap-2">
                 <StickyNote className="h-4 w-4" />
                 <h3 className="font-semibold text-sm">错题笔记</h3>
@@ -505,103 +590,165 @@ export function WrongAnswerNotebook() {
               </Button>
             </div>
 
-            <ScrollArea className="flex-1 min-h-0" ref={notePanelRef}>
-              <div className="p-4 space-y-4">
-                <div className="p-3 rounded-lg bg-muted/50">
-                  <p className="text-xs text-muted-foreground line-clamp-3">
-                    {selectedItem.questionContent}
-                  </p>
-                </div>
+            <Tabs defaultValue="question" className="flex-1 min-h-0 w-full max-w-full">
+              <div className="hidden md:block p-3 border-b">
+                <TabsList>
+                  <TabsTrigger value="question" className="text-xs">题目</TabsTrigger>
+                  <TabsTrigger value="note" className="text-xs">笔记</TabsTrigger>
+                </TabsList>
+              </div>
 
-                <div className="flex items-center gap-4 text-xs">
-                  <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground">你的：</span>
-                    <Badge variant="outline" className="text-red-500 border-red-200">
-                      {selectedItem.userAnswer}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground">正确：</span>
-                    <Badge variant="outline" className="text-green-500 border-green-200">
-                      {selectedItem.correctAnswer}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Tag className="h-3 w-3" />
-                  <span className="truncate">{selectedItem.nodePath}</span>
-                </div>
-
-                {selectedItem.explanation && (
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Lightbulb className="h-3 w-3 text-amber-600" />
-                      <span className="text-xs font-medium text-amber-700 dark:text-amber-300">解析</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
-                      {selectedItem.explanation}
-                    </p>
-                    {selectedItem.images && selectedItem.images.length > 0 && (
-                      <div className="mt-3 grid grid-cols-1 gap-2">
-                        {selectedItem.images.map((img, idx) => (
-                          <img key={idx} src={img} alt={`解析图 ${idx + 1}`} className="max-h-48 object-contain rounded-lg border" />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground">
-                    笔记内容
-                  </label>
-                  {isEditing ? (
-                    <Textarea
-                      value={editingNote}
-                      onChange={(e) => setEditingNote(e.target.value)}
-                      placeholder="记录解题思路、相关知识点、易错点..."
-                      rows={6}
-                      className="resize-none text-sm"
-                      autoFocus
-                    />
-                  ) : (
-                    <div
-                      className={cn(
-                        'min-h-[120px] p-3 rounded-lg border cursor-text',
-                        editingNote || selectedItem.note
-                          ? 'bg-muted border-transparent'
-                          : 'bg-muted/30 border-dashed text-muted-foreground'
-                      )}
-                      onClick={() => setIsEditing(true)}
-                    >
-                      <p className="text-sm whitespace-pre-wrap">
-                        {editingNote || selectedItem.note || '点击此处编辑笔记...'}
+              <ScrollArea className="flex-1 min-h-0 w-full max-w-full">
+                <TabsContent value="question" className="p-0 w-full max-w-full">
+                  <div className="p-2 sm:p-3 space-y-2 sm:space-y-3 w-full max-w-full box-border">
+                    <div className="p-2 sm:p-3 rounded-lg bg-muted/50 w-full max-w-full">
+                      <p className="text-xs sm:text-sm text-muted-foreground break-words word-break-all">
+                        {selectedItem.questionContent}
                       </p>
                     </div>
-                  )}
-                </div>
 
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {new Date(selectedItem.createdAt).toLocaleDateString()}
-                </div>
-              </div>
-            </ScrollArea>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                    <div className="flex items-center gap-2 sm:gap-4 text-xs">
+                      <div className="flex items-center gap-1">
+                        <span className="text-muted-foreground">你的：</span>
+                        <Badge variant="outline" className="text-red-500 border-red-200 text-xs">
+                          {selectedItem.userAnswer}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-muted-foreground">正确：</span>
+                        <Badge variant="outline" className="text-green-500 border-green-200 text-xs">
+                          {selectedItem.correctAnswer}
+                        </Badge>
+                      </div>
+                    </div>
 
-      {!selectedItem && showNotePanel && (
-        <div className="w-1/2 border-l flex items-center justify-center text-center p-6 bg-muted/30">
-          <div>
-            <StickyNote className="h-10 w-10 text-muted-foreground/30 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              选择一道错题查看详情并添加笔记
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Tag className="h-3 w-3" />
+                      <span className="truncate">{selectedItem.nodePath}</span>
+                    </div>
+
+                    {selectedItem.explanation && (
+                      <div className="p-2 sm:p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 w-full max-w-full">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lightbulb className="h-3 w-3 text-amber-600" />
+                          <span className="text-xs font-medium text-amber-700 dark:text-amber-300">解析</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-muted-foreground whitespace-pre-wrap break-words word-break-all">
+                          {selectedItem.explanation}
+                        </p>
+                        {selectedItem.images && selectedItem.images.length > 0 && (
+                          <div className="mt-2 sm:mt-3 grid grid-cols-1 gap-2 w-full">
+                            {selectedItem.images.map((img, idx) => (
+                              <img key={idx} src={img} alt={`解析图 ${idx + 1}`} className="max-h-40 sm:max-h-48 w-full object-contain rounded-lg border" />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="md:hidden space-y-2 w-full">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        笔记内容
+                      </label>
+                      {isEditing ? (
+                        <Textarea
+                          value={editingNote}
+                          onChange={(e) => setEditingNote(e.target.value)}
+                          placeholder="记录解题思路、相关知识点、易错点..."
+                          rows={4}
+                          className="resize-none text-xs sm:text-sm"
+                          autoFocus
+                        />
+                      ) : (
+                        <div
+                          className={cn(
+                            'min-h-[80px] sm:min-h-[100px] p-2 sm:p-3 rounded-lg border cursor-text',
+                            editingNote || selectedItem.note
+                              ? 'bg-muted border-transparent'
+                              : 'bg-muted/30 border-dashed text-muted-foreground'
+                          )}
+                          onClick={() => setIsEditing(true)}
+                        >
+                          <p className="text-xs sm:text-sm whitespace-pre-wrap">
+                            {editingNote || selectedItem.note || '点击此处编辑笔记...'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {new Date(selectedItem.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="note" className="p-0 hidden md:block w-full">
+                  <div className="p-4 space-y-4 w-full">
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        笔记内容
+                      </label>
+                      {isEditing ? (
+                        <Textarea
+                          value={editingNote}
+                          onChange={(e) => setEditingNote(e.target.value)}
+                          placeholder="记录解题思路、相关知识点、易错点..."
+                          rows={8}
+                          className="resize-none text-sm"
+                          autoFocus
+                        />
+                      ) : (
+                        <div
+                          className={cn(
+                            'min-h-[160px] p-3 rounded-lg border cursor-text',
+                            editingNote || selectedItem.note
+                              ? 'bg-muted border-transparent'
+                              : 'bg-muted/30 border-dashed text-muted-foreground'
+                          )}
+                          onClick={() => setIsEditing(true)}
+                        >
+                          <p className="text-sm whitespace-pre-wrap">
+                            {editingNote || selectedItem.note || '点击此处编辑笔记...'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {new Date(selectedItem.createdAt).toLocaleDateString()}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Tag className="h-3 w-3" />
+                        {selectedItem.linkedAngleName}
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+              </ScrollArea>
+            </Tabs>
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center p-4 sm:p-6">
+            <BookOpen className="h-10 sm:h-12 w-10 sm:w-12 text-muted-foreground/30 mb-2 sm:mb-3" />
+            <h3 className="text-sm sm:text-base font-medium mb-1">选择一道错题</h3>
+            <p className="text-xs text-muted-foreground">
+              在左侧列表中选择一道错题查看详情和笔记
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDrawer(true)}
+              className="mt-3 sm:mt-4 md:hidden"
+            >
+              <ListTodo className="h-3 w-3 mr-1" />
+              打开错题列表
+            </Button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

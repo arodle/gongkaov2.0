@@ -95,6 +95,7 @@ interface NodeTreeItemProps {
   onDelete: (nodeId: string) => void;
   onAddChild: (parentId: string) => void;
   onCopy: (node: KnowledgeNodeRecord) => void;
+  onViewDetail: (node: KnowledgeNodeRecord) => void;
   selectedNodeId?: string;
 }
 
@@ -111,6 +112,7 @@ function NodeTreeItem({
   onDelete,
   onAddChild,
   onCopy,
+  onViewDetail,
   selectedNodeId,
 }: NodeTreeItemProps) {
   const hasChildren = children.length > 0;
@@ -180,6 +182,19 @@ function NodeTreeItem({
           </span>
         )}
 
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 md:opacity-0 md:group-hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewDetail(node);
+          }}
+          title="查看详情"
+        >
+          <Eye className="h-3 w-3" />
+        </Button>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -239,6 +254,7 @@ function NodeTreeItem({
                 onDelete={onDelete}
                 onAddChild={onAddChild}
                 onCopy={onCopy}
+                onViewDetail={onSelect}
                 selectedNodeId={selectedNodeId}
               />
             ))}
@@ -572,6 +588,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                     onDelete={handleDeleteNode}
                     onAddChild={handleAddChild}
                     onCopy={handleCopyNode}
+                    onViewDetail={handleSelectNode}
                     selectedNodeId={selectedNode?.id}
                   />
                 ))}

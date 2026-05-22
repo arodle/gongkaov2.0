@@ -118,7 +118,6 @@ export function QuestionCard({
     }, 100);
   }, [answerMode, showResult, question, startTime, onAnswer, onSelectAnswer]);
 
-  // In batch mode, we never show results during practice - only after submit
   const isCorrect = answerMode === 'batch' ? false : (selectedOption || userAnswer) === question.correctAnswer;
 
   const formatTime = (seconds: number) => {
@@ -139,7 +138,7 @@ export function QuestionCard({
       exit={{ opacity: 0, y: -20 }}
       className="space-y-4"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between px-1 sm:px-0">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onExit} className="text-muted-foreground">
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -161,7 +160,6 @@ export function QuestionCard({
       />
 
       <Card className={`border-2 transition-colors ${
-        // In batch mode during practice, never show result
         answerMode === 'batch' && !hasAnswered
           ? 'border-transparent'
           : shouldShowResult
@@ -172,19 +170,18 @@ export function QuestionCard({
           ? 'border-primary bg-primary/5'
           : 'border-transparent'
       }`}>
-        <CardContent className="p-6">
-          <p className="text-lg leading-relaxed whitespace-pre-line">
+        <CardContent className="p-4 sm:p-6">
+          <p className="text-base sm:text-lg leading-relaxed whitespace-pre-line">
             {question.content}
           </p>
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-3">
+      <div className="grid grid-cols-1 gap-2 sm:gap-3">
         {question.options.map((option) => {
           let optionClass = 'border-2 hover:border-primary hover:bg-accent transition-all';
           const currentAnswer = answerMode === 'batch' ? userAnswer : selectedOption;
 
-          // In batch mode during practice, don't show any result styling
           if (answerMode === 'batch' && !hasAnswered) {
             if (currentAnswer === option.label) {
               optionClass = 'border-primary bg-primary/10';
@@ -208,18 +205,17 @@ export function QuestionCard({
               whileTap={!shouldShowResult ? { scale: 0.99 } : {}}
               onClick={() => handleSelectOption(option.label)}
               disabled={shouldShowResult}
-              className={`w-full p-4 rounded-xl text-left flex items-start gap-3 ${optionClass}`}
+              className={`w-full p-3 sm:p-4 rounded-xl text-left flex items-start gap-2 sm:gap-3 ${optionClass}`}
             >
-              <span className="flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold">
+              <span className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center font-semibold text-sm">
                 {option.label}
               </span>
-              <span className="flex-1 pt-1">{option.text}</span>
-              {/* Only show result icons in instant mode or after submission */}
+              <span className="flex-1 pt-0.5 sm:pt-1 text-sm sm:text-base">{option.text}</span>
               {answerMode !== 'batch' && shouldShowResult && option.label === question.correctAnswer && (
-                <CheckCircle2 className="h-6 w-6 text-green-500 flex-shrink-0" />
+                <CheckCircle2 className="h-5 w-5 sm:h-6 sm:w-6 text-green-500 flex-shrink-0" />
               )}
               {answerMode !== 'batch' && shouldShowResult && option.label === currentAnswer && !isCorrect && (
-                <XCircle className="h-6 w-6 text-red-500 flex-shrink-0" />
+                <XCircle className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 flex-shrink-0" />
               )}
             </motion.button>
           );
@@ -234,20 +230,20 @@ export function QuestionCard({
             exit={{ opacity: 0, height: 0 }}
             className="space-y-4"
           >
-            <div className={`p-4 rounded-xl flex items-center gap-3 ${
+            <div className={`p-3 sm:p-4 rounded-xl flex items-center gap-2 sm:gap-3 ${
               isCorrect
                 ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                 : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
             }`}>
               {isCorrect ? (
                 <>
-                  <CheckCircle2 className="h-6 w-6" />
-                  <span className="font-semibold">回答正确！</span>
+                  <CheckCircle2 className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="font-semibold text-sm sm:text-base">回答正确！</span>
                 </>
               ) : (
                 <>
-                  <XCircle className="h-6 w-6" />
-                  <span className="font-semibold">回答错误，正确答案是 {question.correctAnswer}</span>
+                  <XCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="font-semibold text-sm sm:text-base">回答错误，正确答案是 {question.correctAnswer}</span>
                 </>
               )}
             </div>
@@ -267,15 +263,15 @@ export function QuestionCard({
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800"
+                className="p-3 sm:p-4 rounded-xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800"
               >
                 <p className="text-sm leading-relaxed">
                   {question.explanation}
                 </p>
                 {question.images && question.images.length > 0 && (
-                  <div className="mt-4 grid grid-cols-1 gap-2">
+                  <div className="mt-3 sm:mt-4 grid grid-cols-1 gap-2">
                     {question.images.map((img, idx) => (
-                      <img key={idx} src={img} alt={`解析图片 ${idx + 1}`} className="rounded-lg border max-h-64 object-contain" />
+                      <img key={idx} src={img} alt={`解析图片 ${idx + 1}`} className="rounded-lg border max-h-48 sm:max-h-64 object-contain" />
                     ))}
                   </div>
                 )}
@@ -285,37 +281,41 @@ export function QuestionCard({
         )}
       </AnimatePresence>
 
-      <div className="flex items-center justify-between pt-4 border-t">
-        <Button
-          variant="outline"
-          onClick={onPrev}
-          disabled={!canGoPrev}
-        >
-          <ChevronLeft className="h-4 w-4 mr-1" />
-          上一题
-        </Button>
+      <div className="sticky-bottom-bar p-3 sm:p-4">
+        <div className="flex items-center justify-between max-w-2xl mx-auto">
+          <Button
+            variant="outline"
+            onClick={onPrev}
+            disabled={!canGoPrev}
+            className="flex-1 sm:flex-none sm:w-auto"
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            上一题
+          </Button>
 
-        <div className="flex gap-2">
-          {!isLastQuestion ? (
-            <Button
-              variant="default"
-              onClick={onNext}
-              disabled={!userAnswer}
-            >
-              下一题
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          ) : (
-            <Button
-              variant="default"
-              onClick={onSubmit}
-              className="bg-green-600 hover:bg-green-700"
-              disabled={answerMode === 'batch' ? !hasAnswered : false}
-            >
-              <Send className="h-4 w-4 mr-1" />
-              提交整卷
-            </Button>
-          )}
+          <div className="flex gap-2 sm:gap-3">
+            {!isLastQuestion ? (
+              <Button
+                variant="default"
+                onClick={onNext}
+                disabled={!userAnswer}
+                className="flex-1 sm:flex-none sm:w-auto"
+              >
+                下一题
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                onClick={onSubmit}
+                className="flex-1 sm:flex-none sm:w-auto bg-green-600 hover:bg-green-700"
+                disabled={answerMode === 'batch' ? !hasAnswered : false}
+              >
+                <Send className="h-4 w-4 mr-1" />
+                提交整卷
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>
@@ -330,112 +330,82 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
   const { nodes, getWeakNodes } = useAppStore();
   const weakNodes = getWeakNodes();
 
+  const modeCards = [
+    {
+      mode: 'sequence' as const,
+      icon: BookOpen,
+      title: '顺序练习',
+      description: '按知识图谱层级依次练习，从基础开始稳步提升',
+      badge: `${nodes.length} 个知识点`,
+      bgColor: 'bg-blue-100 dark:bg-blue-900/30',
+      iconColor: 'text-blue-600 dark:text-blue-400',
+    },
+    {
+      mode: 'random' as const,
+      icon: Target,
+      title: '随机练习',
+      description: '从全部题库随机抽取，全面覆盖各个知识点',
+      badge: '随机打乱',
+      bgColor: 'bg-purple-100 dark:bg-purple-900/30',
+      iconColor: 'text-purple-600 dark:text-purple-400',
+    },
+    {
+      mode: 'targeted' as const,
+      icon: AlertTriangle,
+      title: '靶向练习',
+      description: '专注练习 PS < 80 的薄弱知识点，针对性强化',
+      badge: '针对薄弱点',
+      badgeVariant: 'destructive' as const,
+      bgColor: 'bg-orange-100 dark:bg-orange-900/30',
+      iconColor: 'text-orange-600 dark:text-orange-400',
+      weakCount: weakNodes.length,
+    },
+    {
+      mode: 'exam' as const,
+      icon: Clock,
+      title: '套卷练习',
+      description: '完整试卷定时模拟，检验整体学习效果',
+      badge: '计时模式',
+      bgColor: 'bg-green-100 dark:bg-green-900/30',
+      iconColor: 'text-green-600 dark:text-green-400',
+    },
+  ];
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6">
-      <motion.div
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-      >
-        <Card
-          className="cursor-pointer hover:border-primary transition-colors h-full"
-          onClick={() => onSelectMode('sequence')}
-        >
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-blue-100 dark:bg-blue-900/30">
-                <BookOpen className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="font-semibold text-lg">顺序练习</h3>
-                <p className="text-sm text-muted-foreground">
-                  按知识图谱层级依次练习，从基础开始稳步提升
-                </p>
-                <Badge variant="secondary">{nodes.length} 个知识点</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      <motion.div
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-      >
-        <Card
-          className="cursor-pointer hover:border-primary transition-colors h-full"
-          onClick={() => onSelectMode('random')}
-        >
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-purple-100 dark:bg-purple-900/30">
-                <Target className="h-6 w-6 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="font-semibold text-lg">随机练习</h3>
-                <p className="text-sm text-muted-foreground">
-                  从全部题库随机抽取，全面覆盖各个知识点
-                </p>
-                <Badge variant="secondary">随机打乱</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      <motion.div
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-      >
-        <Card
-          className="cursor-pointer hover:border-primary transition-colors h-full relative overflow-hidden"
-          onClick={() => onSelectMode('targeted')}
-        >
-          {weakNodes.length > 0 && (
-            <div className="absolute top-0 right-0 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-bl-lg">
-              {weakNodes.length} 个薄弱点
-            </div>
-          )}
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-orange-100 dark:bg-orange-900/30">
-                <AlertTriangle className="h-6 w-6 text-orange-600 dark:text-orange-400" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="font-semibold text-lg">靶向练习</h3>
-                <p className="text-sm text-muted-foreground">
-                  专注练习 PS &lt; 80 的薄弱知识点，针对性强化
-                </p>
-                <Badge variant="destructive">针对薄弱点</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      <motion.div
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-      >
-        <Card
-          className="cursor-pointer hover:border-primary transition-colors h-full"
-          onClick={() => onSelectMode('exam')}
-        >
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-green-100 dark:bg-green-900/30">
-                <Clock className="h-6 w-6 text-green-600 dark:text-green-400" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="font-semibold text-lg">套卷练习</h3>
-                <p className="text-sm text-muted-foreground">
-                  完整试卷定时模拟，检验整体学习效果
-                </p>
-                <Badge variant="secondary">计时模式</Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      {modeCards.map((card) => {
+        const Icon = card.icon;
+        return (
+          <motion.div
+            key={card.mode}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full"
+          >
+            <Card
+              className="cursor-pointer hover:border-primary transition-colors h-full"
+              onClick={() => onSelectMode(card.mode)}
+            >
+              <CardContent className="p-3 sm:p-4 md:p-6">
+                <div className="flex items-start gap-2 sm:gap-3">
+                  <div className={`p-2 rounded-lg ${card.bgColor}`}>
+                    <Icon className={`h-5 w-5 ${card.iconColor}`} />
+                  </div>
+                  <div className="space-y-1 sm:space-y-2 flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm sm:text-base md:text-lg">{card.title}</h3>
+                    <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
+                      {card.description}
+                    </p>
+                    <Badge variant={card.badgeVariant || 'secondary'} className="text-[10px] sm:text-xs">
+                      {card.badge}
+                    </Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        );
+      })}
     </div>
   );
 }
@@ -480,15 +450,15 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
 
   if (!questions || questions.length === 0) {
     return (
-      <div className="max-w-2xl mx-auto p-6">
+      <div className="max-w-2xl mx-auto p-4 sm:p-6">
         <Card className="border-2 border-amber-500 bg-amber-50 dark:bg-amber-900/20">
-          <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-amber-500" />
-            <h3 className="text-lg font-semibold mb-2">暂无练习题目</h3>
-            <p className="text-muted-foreground">
+          <CardContent className="p-6 sm:p-8 text-center">
+            <AlertTriangle className="h-10 w-10 sm:h-12 sm:w-12 mx-auto mb-3 sm:mb-4 text-amber-500" />
+            <h3 className="text-base sm:text-lg font-semibold mb-2">暂无练习题目</h3>
+            <p className="text-sm text-muted-foreground">
               题库为空或没有符合当前筛选条件的题目
             </p>
-            <Button variant="outline" className="mt-4" onClick={onExit}>
+            <Button variant="outline" className="mt-3 sm:mt-4" onClick={onExit}>
               返回练习选择
             </Button>
           </CardContent>
@@ -624,21 +594,25 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6">
+    <div className="px-3 sm:px-4">
       <div className="mb-4">
         <div className="flex items-center gap-2 mb-2">
-          <div className="flex-1 flex overflow-x-auto gap-1 pb-2">
-            {questions.map((_, idx) => (
-              <Button
-                key={idx}
-                variant={idx === currentIndex ? 'default' : userAnswers[idx] ? 'secondary' : 'outline'}
-                size="sm"
-                className="min-w-[2.5rem] flex-shrink-0"
-                onClick={() => handleQuestionJump(idx)}
-              >
-                {idx + 1}
-              </Button>
-            ))}
+          <span className="text-xs text-muted-foreground flex-shrink-0">题目进度</span>
+          <div className="flex-1 flex question-progress-scroll gap-1 pb-2">
+            {questions.map((_, idx) => {
+              const isAnswered = userAnswers[idx] !== undefined;
+              return (
+                <Button
+                  key={idx}
+                  variant={idx === currentIndex ? 'default' : isAnswered ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="min-w-[2rem] sm:min-w-[2.5rem] flex-shrink-0 text-xs sm:text-sm"
+                  onClick={() => handleQuestionJump(idx)}
+                >
+                  {idx + 1}
+                </Button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -687,37 +661,35 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="max-w-4xl mx-auto p-6 space-y-6"
+      className="max-w-4xl mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6"
     >
-      {/* 成绩概览 */}
       <Card className="border-2 border-primary">
-        <CardContent className="p-8 text-center space-y-6">
-          <div className="text-6xl font-bold text-primary">{accuracy}%</div>
-          <p className="text-lg">正确率</p>
-          <div className="flex justify-center gap-8">
+        <CardContent className="p-4 sm:p-8 text-center space-y-4 sm:space-y-6">
+          <div className="text-4xl sm:text-6xl font-bold text-primary">{accuracy}%</div>
+          <p className="text-base sm:text-lg">正确率</p>
+          <div className="flex justify-center gap-4 sm:gap-8">
             <div className="text-center">
-              <div className="text-3xl font-bold text-green-500">{correctCount}</div>
-              <div className="text-sm text-muted-foreground">正确</div>
+              <div className="text-xl sm:text-3xl font-bold text-green-500">{correctCount}</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">正确</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl font-bold text-red-500">{totalCount - correctCount}</div>
-              <div className="text-sm text-muted-foreground">错误</div>
+              <div className="text-xl sm:text-3xl font-bold text-red-500">{totalCount - correctCount}</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">错误</div>
             </div>
             <div className="text-center">
-              <div className="text-3xl font-bold text-blue-500">{formatTime(elapsedTime)}</div>
-              <div className="text-sm text-muted-foreground">用时</div>
+              <div className="text-xl sm:text-3xl font-bold text-blue-500">{formatTime(elapsedTime)}</div>
+              <div className="text-xs sm:text-sm text-muted-foreground">用时</div>
             </div>
           </div>
 
-          <Progress value={accuracy} className="h-3" />
+          <Progress value={accuracy} className="h-2 sm:h-3" />
         </CardContent>
       </Card>
 
-      {/* 题号列表 */}
       <Card>
-        <CardContent className="p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">答题详情</h3>
+        <CardContent className="p-4 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="font-semibold text-base sm:text-lg">答题详情</h3>
             <div className="flex gap-2">
               <Button
                 variant={filter === 'all' ? 'default' : 'outline'}
@@ -729,7 +701,6 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
               <Button
                 variant={filter === 'wrong' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setFilter('wrong')}
                 className={filter === 'wrong' ? 'bg-red-500 hover:bg-red-600' : ''}
               >
                 只看错题 ({totalCount - correctCount})
@@ -737,8 +708,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
             </div>
           </div>
 
-          {/* 题号网格 */}
-          <div className="grid grid-cols-10 gap-2">
+          <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5 sm:gap-2">
             {results.map((result, idx) => {
               const isCorrect = result.isCorrect;
               if (filter === 'wrong' && isCorrect) return null;
@@ -748,7 +718,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                   key={idx}
                   onClick={() => setSelectedQuestion(selectedQuestion === idx ? null : idx)}
                   className={`
-                    aspect-square rounded-lg flex items-center justify-center font-semibold text-sm
+                    aspect-square rounded-lg flex items-center justify-center font-semibold text-xs sm:text-sm
                     transition-all hover:scale-105
                     ${isCorrect 
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 hover:bg-green-200' 
@@ -763,109 +733,104 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
             })}
           </div>
 
-          {/* 图例 */}
-          <div className="flex gap-6 text-sm justify-center">
+          <div className="flex gap-4 sm:gap-6 text-xs sm:text-sm justify-center">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-green-500"></div>
+              <div className="w-3 h-3 rounded bg-green-500"></div>
               <span>正确</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-red-500"></div>
+              <div className="w-3 h-3 rounded bg-red-500"></div>
               <span>错误</span>
             </div>
           </div>
 
-          {/* 选中题目的详情 */}
           {selectedQuestion !== null && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
-              className="border-t pt-4 mt-4"
+              className="border-t pt-4 mt-4 space-y-4"
             >
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold">
-                    第 {selectedQuestion + 1} 题
-                    <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                      results[selectedQuestion].isCorrect 
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
-                        : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                    }`}>
-                      {results[selectedQuestion].isCorrect ? '正确' : '错误'}
-                    </span>
-                  </h4>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSelectedQuestion(null)}
-                  >
-                    关闭
-                  </Button>
-                </div>
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold">
+                  第 {selectedQuestion + 1} 题
+                  <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                    results[selectedQuestion].isCorrect 
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                  }`}>
+                    {results[selectedQuestion].isCorrect ? '正确' : '错误'}
+                  </span>
+                </h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedQuestion(null)}
+                >
+                  关闭
+                </Button>
+              </div>
+              
+              <div className="space-y-3">
+                <p className="text-sm font-medium">题目内容：</p>
+                <p className="text-sm whitespace-pre-line">{results[selectedQuestion].question?.content}</p>
                 
-                <div className="space-y-3">
-                  <p className="text-sm font-medium">题目内容：</p>
-                  <p className="text-sm whitespace-pre-line">{results[selectedQuestion].question?.content}</p>
-                  
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">选项：</p>
-                    {results[selectedQuestion].question?.options.map((opt: any) => {
-                      const isCorrectOption = opt.label === results[selectedQuestion].question?.correctAnswer;
-                      const isUserAnswer = opt.label === results[selectedQuestion].selectedAnswer;
-                      
-                      return (
-                        <div 
-                          key={opt.label}
-                          className={`p-3 rounded-lg border ${
-                            isCorrectOption 
-                              ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
-                              : isUserAnswer && !results[selectedQuestion].isCorrect
-                              ? 'border-red-500 bg-red-50 dark:bg-red-900/20 line-through'
-                              : 'border-gray-200 dark:border-gray-700'
-                          }`}
-                        >
-                          <span className="font-semibold">{opt.label}.</span> {opt.text}
-                          {isCorrectOption && <span className="ml-2 text-green-600">✓ 正确答案</span>}
-                          {isUserAnswer && !isCorrectOption && <span className="ml-2 text-red-600">✗ 你的答案</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {results[selectedQuestion].question?.explanation && (
-                    <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Lightbulb className="h-4 w-4 text-amber-600" />
-                        <span className="text-sm font-medium">解析</span>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">选项：</p>
+                  {results[selectedQuestion].question?.options.map((opt: any) => {
+                    const isCorrectOption = opt.label === results[selectedQuestion].question?.correctAnswer;
+                    const isUserAnswer = opt.label === results[selectedQuestion].selectedAnswer;
+                    
+                    return (
+                      <div 
+                        key={opt.label}
+                        className={`p-3 rounded-lg border ${
+                          isCorrectOption 
+                            ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
+                            : isUserAnswer && !results[selectedQuestion].isCorrect
+                            ? 'border-red-500 bg-red-50 dark:bg-red-900/20 line-through'
+                            : 'border-gray-200 dark:border-gray-700'
+                        }`}
+                      >
+                        <span className="font-semibold text-sm">{opt.label}.</span> {opt.text}
+                        {isCorrectOption && <span className="ml-2 text-green-600 text-xs">✓ 正确答案</span>}
+                        {isUserAnswer && !isCorrectOption && <span className="ml-2 text-red-600 text-xs">✗ 你的答案</span>}
                       </div>
-                      <p className="text-sm">{results[selectedQuestion].question?.explanation}</p>
-                    </div>
-                  )}
-
-                  {results[selectedQuestion].question?.images?.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium">解析图片：</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {results[selectedQuestion].question?.images.map((img: string, idx: number) => (
-                          <img 
-                            key={idx} 
-                            src={img} 
-                            alt={`解析图片 ${idx + 1}`} 
-                            className="rounded-lg border max-h-48 object-contain" 
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
+
+                {results[selectedQuestion].question?.explanation && (
+                  <div className="p-3 sm:p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Lightbulb className="h-4 w-4 text-amber-600" />
+                      <span className="text-sm font-medium">解析</span>
+                    </div>
+                    <p className="text-sm">{results[selectedQuestion].question?.explanation}</p>
+                  </div>
+                )}
+
+                {results[selectedQuestion].question?.images?.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">解析图片：</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {results[selectedQuestion].question?.images.map((img: string, idx: number) => (
+                        <img 
+                          key={idx} 
+                          src={img} 
+                          alt={`解析图片 ${idx + 1}`} 
+                          className="rounded-lg border max-h-40 sm:max-h-48 object-contain" 
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
         </CardContent>
       </Card>
 
-      {/* 操作按钮 */}
-      <div className="flex gap-4 justify-center">
+      <div className="flex gap-3 sm:gap-4 justify-center">
         <Button size="lg" onClick={onExit}>
           返回练习选择
         </Button>

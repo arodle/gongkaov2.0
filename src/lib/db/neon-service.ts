@@ -172,5 +172,3 @@ export async function upsertPracticeSets(
   }
   return practiceSets.length;
 }
-
-export { sql };

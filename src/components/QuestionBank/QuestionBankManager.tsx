@@ -414,22 +414,30 @@ export function QuestionBankManager() {
   }), [questionBank, realQuestions, simulatedQuestions]);
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="p-4 border-b space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h2 className="font-semibold flex items-center gap-2">
-              <BookOpen className="h-5 w-5" />
+    <div className="h-full flex flex-col w-full overflow-x-hidden">
+      <div className="p-3 sm:p-4 border-b space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-semibold flex items-center gap-2 text-sm sm:text-base">
+              <BookOpen className="h-4 sm:h-5 w-4 sm:w-5" />
               题库管理
             </h2>
-            <Badge variant="outline">{stats.total} 题</Badge>
+            <Badge variant="outline" className="text-xs">{stats.total} 题</Badge>
+            <Badge variant="secondary" className="px-2 text-xs">
+              <FileQuestion className="h-3 w-3 mr-1" />
+              真题 {stats.real}
+            </Badge>
+            <Badge variant="outline" className="px-2 text-xs">
+              <BookOpen className="h-3 w-3 mr-1" />
+              模拟题 {stats.simulated}
+            </Badge>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleImportJSON}>
+          <div className="hidden sm:flex items-center gap-1">
+            <Button variant="outline" size="sm">
               <Upload className="h-4 w-4 mr-1" />
               导入
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExportQuestions}>
+            <Button variant="outline" size="sm">
               <Download className="h-4 w-4 mr-1" />
               导出
             </Button>
@@ -437,43 +445,38 @@ export function QuestionBankManager() {
               <Layers className="h-4 w-4 mr-1" />
               创建套卷
             </Button>
-            <Button size="sm" onClick={() => handleOpenQuestionDialog()}>
-              <Plus className="h-4 w-4 mr-1" />
-              添加题目
-            </Button>
           </div>
         </div>
 
-        <div className="flex gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 sm:h-4 w-3.5 sm:w-4 text-muted-foreground" />
             <Input
               placeholder="搜索题目内容..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 h-9"
+              className="pl-7 sm:pl-8 h-8 sm:h-9 text-sm"
             />
           </div>
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value as any)}
-            className="border rounded px-2 py-1.5 text-sm bg-background"
+            className="shrink-0 border rounded px-2 py-1.5 text-xs sm:text-sm bg-background"
           >
             <option value="all">全部类型</option>
             <option value="real">真题</option>
             <option value="simulated">模拟题</option>
           </select>
-        </div>
-
-        <div className="flex items-center gap-4 text-xs">
-          <Badge variant="secondary">
-            <FileQuestion className="h-3 w-3 mr-1" />
-            真题 {stats.real} 题
-          </Badge>
-          <Badge variant="outline">
-            <BookOpen className="h-3 w-3 mr-1" />
-            模拟题 {stats.simulated} 题
-          </Badge>
+          <Button variant="outline" size="icon" onClick={() => setShowPaperDialog(true)} className="h-8 w-8 shrink-0">
+            <Layers className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleImportJSON} className="h-8 w-8 shrink-0">
+            <Upload className="h-4 w-4" />
+          </Button>
+          <Button size="sm" onClick={() => handleOpenQuestionDialog()} className="text-xs sm:text-sm shrink-0">
+            <Plus className="h-3 sm:h-4 w-3 sm:w-4 mr-1" />
+            <span className="hidden sm:inline">添加题目</span>
+          </Button>
         </div>
       </div>
 
@@ -485,40 +488,60 @@ export function QuestionBankManager() {
         className="hidden"
       />
 
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="p-4">
+      <ScrollArea className="flex-1 min-h-0 w-full max-w-full">
+        <div className="p-2 sm:p-3 w-full max-w-full box-border">
           {filteredQuestions.length > 0 ? (
-            <div className="space-y-2">
+            <div className="space-y-2 sm:space-y-3 w-full max-w-full">
               {filteredQuestions.map((question) => (
                 <Card
                   key={question.id}
                   className={cn(
-                    'cursor-pointer transition-colors hover:border-primary/50',
+                    'cursor-pointer transition-colors hover:border-primary/50 w-full max-w-full',
                     selectedQuestions.has(question.id) && 'border-primary bg-primary/5'
                   )}
                   onClick={() => handleToggleQuestionSelection(question.id)}
                 >
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Badge
-                            variant={question.type === 'real' ? 'default' : 'secondary'}
-                            className="text-xs"
-                          >
-                            {question.type === 'real' ? '真题' : '模拟题'}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground truncate" title={question.knowledgePath}>
-                            {question.knowledgePath || getLinkedNodeName(question.linkedAngleId)}
-                          </span>
+                  <CardContent className="p-2 sm:p-3 w-full max-w-full">
+                    <div className="flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3 w-full max-w-full">
+                      <div className="flex-1 min-w-0 w-full">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 mb-2 w-full">
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Badge
+                              variant={question.type === 'real' ? 'default' : 'secondary'}
+                              className="text-xs px-1.5 py-0.5 flex-shrink-0"
+                            >
+                              {question.type === 'real' ? '真题' : '模拟题'}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[150px]" title={question.knowledgePath}>
+                              {question.knowledgePath || getLinkedNodeName(question.linkedAngleId)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 sm:hidden" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleOpenQuestionDialog(question)}
+                              className="h-7 w-7"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteQuestion(question.id)}
+                              className="h-7 w-7"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
                         </div>
-                        <p className="text-sm line-clamp-2 mb-2 whitespace-pre-wrap break-words">{question.content}</p>
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <p className="text-xs sm:text-sm line-clamp-2 mb-2 whitespace-pre-wrap break-words word-break-all w-full">{question.content}</p>
+                        <div className="flex flex-wrap gap-1 text-xs text-muted-foreground w-full">
                           {question.options.map((opt) => (
                             <span
                               key={opt.label}
                               className={cn(
-                                'px-2 py-1 rounded',
+                                'px-1.5 py-0.5 rounded text-xs max-w-full break-words word-break-all',
                                 opt.label === question.correctAnswer && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                               )}
                             >
@@ -528,36 +551,36 @@ export function QuestionBankManager() {
                         </div>
                         
                         {question.explanation && (
-                          <div className="mt-3 pt-3 border-t border-dashed">
+                          <div className="mt-2 pt-2 border-t border-dashed w-full">
                             <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                               <Lightbulb className="h-3 w-3" />
                               <span>解析</span>
                             </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap break-words">{question.explanation}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-2 whitespace-pre-wrap break-words word-break-all">{question.explanation}</p>
                           </div>
                         )}
                         
                         {question.reference && (
-                          <div className="mt-3 pt-3 border-t border-dashed">
+                          <div className="mt-2 pt-2 border-t border-dashed w-full">
                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <FileText className="h-3 w-3" />
-                              <span>题目出处：{question.reference}</span>
+                              <FileText className="h-3 w-3 flex-shrink-0" />
+                              <span className="truncate">题目出处：{question.reference}</span>
                             </div>
                           </div>
                         )}
                         
                         {question.images && question.images.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-dashed">
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-2">
+                          <div className="mt-2 pt-2 border-t border-dashed w-full">
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
                               <ImageIcon className="h-3 w-3" />
                               <span>解析图片</span>
                             </div>
-                            <div className="flex gap-2 overflow-x-auto pb-2">
+                            <div className="flex gap-1.5 overflow-x-auto pb-1.5">
                               {question.images.map((img, idx) => (
-                                <div key={idx} className="relative group cursor-pointer" onClick={() => setPreviewImage(img)}>
-                                  <img src={img} alt={`解析图 ${idx + 1}`} className="h-20 object-contain rounded border flex-shrink-0" />
+                                <div key={idx} className="relative group cursor-pointer flex-shrink-0" onClick={() => setPreviewImage(img)}>
+                                  <img src={img} alt={`解析图 ${idx + 1}`} className="h-16 sm:h-20 object-contain rounded border" />
                                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all rounded border flex items-center justify-center">
-                                    <ZoomIn className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <ZoomIn className="h-4 sm:h-5 w-4 sm:w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                   </div>
                                 </div>
                               ))}
@@ -565,20 +588,22 @@ export function QuestionBankManager() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="hidden sm:flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="icon"
                           onClick={() => handleOpenQuestionDialog(question)}
+                          className="h-7 w-7"
                         >
-                          <Edit3 className="h-4 w-4" />
+                          <Edit3 className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="icon"
                           onClick={() => handleDeleteQuestion(question.id)}
+                          className="h-7 w-7"
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>
                       </div>
                     </div>

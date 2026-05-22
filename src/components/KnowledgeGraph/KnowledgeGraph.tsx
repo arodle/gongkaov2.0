@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Graph, type GraphData, type NodeData, type EdgeData } from '@antv/g6';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
-import { getPSColor, getPSColorWithFocus } from '@/lib/utils/colors';
+import { getPSColor } from '@/lib/utils/colors';
 import type { KnowledgeNodeRecord } from '@/types';
 import {
   ZoomIn,
@@ -190,8 +190,9 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const nodesRef = useRef<KnowledgeNodeRecord[]>([]);
+  const collapsedNodesRef = useRef<Set<string>>(new Set());
   const [selectedNode, setSelectedNode] = useState<KnowledgeNodeRecord | null>(null);
-  const [focusMode, setFocusMode] = useState(false);
+  
   const [flyingDots, setFlyingDots] = useState<FlyingDot[]>([]);
   const [isReady, setIsReady] = useState(false);
   const [showWrongAnswerList, setShowWrongAnswerList] = useState<string | null>(null);
@@ -226,15 +227,17 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
   }, [nodeStatsCache]);
 
   const graphData = useMemo((): GraphData => {
-    if (!nodes.length) return { nodes: [], edges: [] };
+    if (!nodes.length) {
+      return {
+        nodes: [],
+        edges: [],
+      };
+    }
 
-    const graphNodes: any[] = nodes.map(node => {
+    const graphNodes = nodes.map(node => {
       const cachedStats = nodeStatsCache.get(node.id);
       const hasAnswered = cachedStats?.hasAnswered ?? false;
-      const wrongCount = cachedStats?.wrongCount ?? 0;
-      const colorConfig = focusMode
-        ? getPSColorWithFocus(node.ps_score, focusMode, hasAnswered)
-        : getPSColor(node.ps_score, hasAnswered);
+      const colorConfig = getPSColor(node.ps_score, hasAnswered);
 
       return {
         id: node.id,
@@ -247,27 +250,31 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           textColor: colorConfig.text,
           pulse: colorConfig.pulse,
           opacity: colorConfig.opacity,
-          stats: { correct: cachedStats?.correct ?? 0, wrong: cachedStats?.wrong ?? 0 },
-          wrongCount,
-          hasAnswered,
+          stats: {
+            correct: cachedStats?.correct ?? 0,
+            wrong: cachedStats?.wrong ?? 0,
+          },
         },
       };
     });
 
-    const graphEdges: EdgeData[] = nodes
-      .filter(node => node.parent_id !== null)
+    const graphEdges = nodes
+      .filter(n => n.parent_id)
       .map(node => ({
         id: `${node.parent_id}-${node.id}`,
         source: node.parent_id!,
         target: node.id,
         data: {
           stroke: '#94a3b8',
-          lineWidth: 1,
+          lineWidth: 1.5,
         },
       }));
 
-    return { nodes: graphNodes, edges: graphEdges };
-  }, [nodes, focusMode, nodeStatsCache]);
+    return {
+      nodes: graphNodes,
+      edges: graphEdges,
+    };
+  }, [nodes, nodeStatsCache]);
 
   const structureChanged = useMemo(() => {
     return nodes.length > 0;
@@ -300,6 +307,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
         const graph = new Graph({
           container: containerRef.current,
           data: graphData,
+          animation: true,
           node: {
             style: {
               size: (d: any) => {
@@ -342,15 +350,62 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           layout: {
             type: 'dagre',
             rankdir: 'LR',
-            nodesep: 40,
-            ranksep: 90,
+            nodesep: 35,
+            ranksep: 70,
+            animate: true,
+            animationDuration: 500,
           },
           behaviors: ['drag-canvas', 'zoom-canvas'],
-          autoFit: 'view',
+          autoFit: false,
           padding: 60,
         });
 
         graph.on('node:click', (event: any) => {
+          const nodeId = event?.target?.id;
+          if (!nodeId) return;
+
+          const latestNodes = nodesRef.current;
+          const hasChildren = latestNodes.some(n => n.parent_id === nodeId);
+          if (!hasChildren) return;
+
+          graph.setElementState(nodeId, ['selected']);
+          setTimeout(() => {
+            graph.setElementState(nodeId, []);
+          }, 500);
+
+          const descendants = new Set<string>();
+          const collect = (parentId: string) => {
+            latestNodes
+              .filter(n => n.parent_id === parentId)
+              .forEach(child => {
+                descendants.add(child.id);
+                collect(child.id);
+              });
+          };
+          collect(nodeId);
+
+          const isCollapsed = collapsedNodesRef.current.has(nodeId);
+          if (isCollapsed) {
+            collapsedNodesRef.current.delete(nodeId);
+          } else {
+            collapsedNodesRef.current.add(nodeId);
+          }
+
+          descendants.forEach(id => {
+            graph.setElementVisibility(id, isCollapsed ? 'visible' : 'hidden');
+          });
+
+          graphData.edges.forEach((edge: any) => {
+            if (descendants.has(edge.source) || descendants.has(edge.target)) {
+              graph.setElementVisibility(edge.id, isCollapsed ? 'visible' : 'hidden');
+            }
+          });
+
+          graph.draw();
+        });
+
+        graph.on('node:contextmenu', (event: any) => {
+          event.preventDefault();
           const nodeId = (event as any)?.target?.id;
           if (!nodeId) return;
 
@@ -362,6 +417,11 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           }
         });
 
+        graph.render();
+        graph.fitView({
+          padding: 80
+        });
+        
         graphRef.current = graph;
         setIsReady(true);
       } catch (error) {
@@ -391,15 +451,17 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
       try {
         if (structureChanged) {
           graphRef.current.setData(graphData);
-          graphRef.current.render();
+          graphRef.current.draw();
         } else {
-          const nodeData = graphData.nodes;
-          if (nodeData && nodeData.length > 0) {
-            graphRef.current.updateNodeData(
-              nodeData.map(n => ({ id: n.id, data: n.data }))
-            );
-            graphRef.current.draw();
-          }
+          graphRef.current.updateNodeData(
+            graphData.nodes.map(
+              n => ({
+                id: n.id,
+                data: n.data
+              })
+            )
+          );
+          graphRef.current.draw();
         }
       } catch (error) {
         console.error('Failed to update graph:', error);
@@ -425,10 +487,6 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
     if (graphRef.current) {
       graphRef.current.fitView();
     }
-  }, []);
-
-  const toggleFocusMode = useCallback(() => {
-    setFocusMode(prev => !prev);
   }, []);
 
   const triggerFlyingDot = useCallback((targetNodeId: string) => {
@@ -562,27 +620,6 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
             </Button>
           </TooltipTrigger>
           <TooltipContent>适应视图</TooltipContent>
-        </Tooltip>
-      </div>
-
-      <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="icon"
-              variant={focusMode ? 'default' : 'secondary'}
-              onClick={toggleFocusMode}
-              className={cn('shadow-lg', focusMode && 'bg-amber-500 hover:bg-amber-600')}
-              aria-label={focusMode ? '退出焦点模式' : '进入焦点模式'}
-            >
-              {focusMode ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{focusMode ? '退出焦点模式' : '进入焦点模式'}</TooltipContent>
         </Tooltip>
 
         <Popover>

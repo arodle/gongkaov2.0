@@ -416,7 +416,6 @@ async function seedInitialData() {
 
   await db.knowledge_nodes.bulkAdd(nodesToAdd);
 
-  // 确保所有题目都有images字段
   const bankItems: QuestionBankItem[] = SAMPLE_QUESTION_BANK.map(item => ({
     ...item,
     images: item.images || [],

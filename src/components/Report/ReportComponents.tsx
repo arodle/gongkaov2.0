@@ -413,33 +413,81 @@ export function HoneycombMap() {
 }
 
 export function ReportDashboard() {
+  const { nodes, questionBank, getWeakNodes } = useAppStore();
+  const weakNodes = getWeakNodes();
+
   return (
     <div className="flex flex-col h-full">
-      <div className="p-6 pb-2">
-        <h2 className="text-2xl font-bold tracking-tight">数据报告</h2>
-        <p className="text-muted-foreground">
+      <div className="p-4 sm:p-6 pb-2">
+        <h2 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">数据报告</h2>
+        <p className="text-xs sm:text-sm text-muted-foreground">
           全面了解你的学习进度和能力分布
         </p>
       </div>
 
+      <div className="grid grid-cols-3 gap-2 sm:gap-3 px-4 sm:px-6 py-2 border-b">
+        <div className="text-center p-2 sm:p-3 rounded-lg bg-blue-50 dark:bg-blue-900/30">
+          <div className="text-base sm:text-xl font-bold text-blue-600 dark:text-blue-400">
+            {nodes.length}
+          </div>
+          <div className="text-[10px] sm:text-xs text-blue-600/70">知识点</div>
+        </div>
+        <div className="text-center p-2 sm:p-3 rounded-lg bg-green-50 dark:bg-green-900/30">
+          <div className="text-base sm:text-xl font-bold text-green-600 dark:text-green-400">
+            {questionBank.length}
+          </div>
+          <div className="text-[10px] sm:text-xs text-green-600/70">题库</div>
+        </div>
+        <div className="text-center p-2 sm:p-3 rounded-lg bg-red-50 dark:bg-red-900/30">
+          <div className="text-base sm:text-xl font-bold text-red-600 dark:text-red-400">
+            {weakNodes.length}
+          </div>
+          <div className="text-[10px] sm:text-xs text-red-600/70">薄弱点</div>
+        </div>
+      </div>
+
       <ScrollArea className="flex-1">
-        <div className="p-6 pt-2 space-y-6">
-          <Tabs defaultValue="radar" className="space-y-6">
-            <TabsList>
-              <TabsTrigger value="radar">能力雷达</TabsTrigger>
-              <TabsTrigger value="trend">PS 趋势</TabsTrigger>
-              <TabsTrigger value="map">全景图</TabsTrigger>
+        <div className="p-4 sm:p-6 pt-2 space-y-4 sm:space-y-6">
+          <Tabs defaultValue="radar" className="space-y-4 sm:space-y-6">
+            <TabsList className="w-full grid grid-cols-3">
+              <TabsTrigger value="radar" className="flex-1">能力雷达</TabsTrigger>
+              <TabsTrigger value="trend" className="flex-1">PS 趋势</TabsTrigger>
+              <TabsTrigger value="map" className="flex-1">全景图</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="radar" className="space-y-6">
+            <TabsContent value="radar" className="space-y-4 sm:space-y-6">
               <RadarChart />
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base sm:text-lg">综合能力评估</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs sm:text-sm text-muted-foreground">
+                    基于你的学习数据，系统评估了你的综合能力。建议重点关注薄弱知识点的练习，通过靶向练习提升整体掌握度。
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
+                    {[
+                      { name: '言语理解', color: 'bg-blue-500' },
+                      { name: '数量关系', color: 'bg-green-500' },
+                      { name: '判断推理', color: 'bg-purple-500' },
+                      { name: '资料分析', color: 'bg-orange-500' },
+                      { name: '常识判断', color: 'bg-pink-500' },
+                    ].map((item, idx) => (
+                      <div key={idx} className="text-center p-2 rounded-lg bg-muted">
+                        <div className={`w-4 h-4 sm:w-5 sm:h-5 mx-auto rounded-full ${item.color} mb-1`} />
+                        <div className="text-[10px] sm:text-xs">{item.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
 
-            <TabsContent value="trend" className="space-y-6">
+            <TabsContent value="trend" className="space-y-4 sm:space-y-6">
               <PSTrendChart />
             </TabsContent>
 
-            <TabsContent value="map" className="space-y-6">
+            <TabsContent value="map" className="space-y-4 sm:space-y-6">
               <HoneycombMap />
             </TabsContent>
           </Tabs>
