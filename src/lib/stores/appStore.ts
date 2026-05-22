@@ -72,6 +72,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   initialize: async () => {
     try {
+      await fetch('/api/init');
+
       let nodes = await getNodesByUser();
       let questionBankItems: QuestionBankItem[] = [];
 
@@ -116,7 +118,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         isInitialized: true,
       });
     } catch (error) {
-      console.error('Failed to initialize app state:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('Failed to initialize app state:', msg, error);
       set({ isInitialized: true });
     }
   },
@@ -374,6 +377,59 @@ async function fetchFromNeon() {
     return { nodes, questionBank: questionBankItems };
   } catch {
     return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+  }
+}
+
+export async function syncNodeToNeon(node: {
+  id: string;
+  user_id: string;
+  name: string;
+  parent_id?: string | null;
+  pos_x?: number;
+  pos_y?: number;
+  ps_score?: number;
+  node_type?: string;
+  content?: string;
+  annotation?: string;
+}) {
+  try {
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': node.user_id },
+      body: JSON.stringify({
+        knowledgeNode: {
+          id: node.id,
+          name: node.name,
+          parent_id: node.parent_id,
+          pos_x: node.pos_x,
+          pos_y: node.pos_y,
+          ps_score: node.ps_score,
+          node_type: node.node_type,
+          content: node.content,
+          annotation: node.annotation,
+        },
+      }),
+    });
+    const json = await response.json();
+    return json.success;
+  } catch (err) {
+    console.error('Failed to sync node to Neon:', err);
+    return false;
+  }
+}
+
+export async function syncNodeDeleteToNeon(userId: string, nodeIds: string[]) {
+  try {
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify({ deleteNodeIds: nodeIds }),
+    });
+    const json = await response.json();
+    return json.success;
+  } catch (err) {
+    console.error('Failed to sync node delete to Neon:', err);
+    return false;
   }
 }
 

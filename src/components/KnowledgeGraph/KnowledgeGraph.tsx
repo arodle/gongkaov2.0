@@ -28,6 +28,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetDescription,
 } from '@/components/ui/sheet';
 import {
   Tooltip,
@@ -671,29 +672,6 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
         </Popover>
       </div>
 
-      <div className={cn('absolute bottom-4 left-4 flex items-center gap-4 rounded-lg px-4 py-2 z-10', GLASS_STYLE)}>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-full bg-[#e5e7eb]" />
-          <span className="text-xs text-muted-foreground">未作答</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-full bg-[#DC2626]" />
-          <span className="text-xs text-muted-foreground">薄弱</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-full bg-[#EA580C]" />
-          <span className="text-xs text-muted-foreground">需加强</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-full bg-[#CA8A04]" />
-          <span className="text-xs text-muted-foreground">学习中</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-3 h-3 rounded-full bg-[#0891B2]" />
-          <span className="text-xs text-muted-foreground">熟练</span>
-        </div>
-      </div>
-
       {selectedNode && (
         <Sheet open={!!selectedNode} onOpenChange={(open) => !open && setSelectedNode(null)}>
           <SheetContent className="w-[400px] sm:w-[540px] flex flex-col">
@@ -725,6 +703,9 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
                   </Popover>
                 )}
               </SheetTitle>
+              <SheetDescription className="sr-only">
+                {selectedNode.name} 的详细信息和统计数据
+              </SheetDescription>
             </SheetHeader>
             <ScrollArea className="flex-1 min-h-0">
             <div className="mt-6 space-y-6">

@@ -3,6 +3,8 @@ import {
   getMindMaps,
   getKnowledgeNodes,
   upsertMindMap,
+  upsertKnowledgeNode,
+  deleteKnowledgeNodes,
   getQuestions,
   upsertQuestions,
   getAnswerRecords,
@@ -42,10 +44,22 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = request.headers.get('x-user-id') || 'default';
+    const userId = request.headers.get('x-user-id') || 'default_user';
     const body = await request.json();
-    const { mindMap, questions, answers, practiceSets } = body as {
+    const { mindMap, knowledgeNode, deleteNodeIds, questions, answers, practiceSets } = body as {
       mindMap?: { id?: string; name?: string; data: unknown };
+      knowledgeNode?: {
+        id: string;
+        name: string;
+        parent_id?: string | null;
+        pos_x?: number;
+        pos_y?: number;
+        ps_score?: number;
+        node_type?: string;
+        content?: string;
+        annotation?: string;
+      };
+      deleteNodeIds?: string[];
       questions?: Array<Record<string, unknown>>;
       answers?: Array<Record<string, unknown>>;
       practiceSets?: Array<Record<string, unknown>>;
@@ -56,6 +70,16 @@ export async function POST(request: NextRequest) {
     if (mindMap) {
       const mindMapId = await upsertMindMap(userId, mindMap);
       results.mindMapId = mindMapId;
+    }
+
+    if (knowledgeNode) {
+      await upsertKnowledgeNode(userId, knowledgeNode);
+      results.nodeSaved = true;
+    }
+
+    if (deleteNodeIds && deleteNodeIds.length > 0) {
+      await deleteKnowledgeNodes(userId, deleteNodeIds);
+      results.nodesDeleted = deleteNodeIds.length;
     }
 
     if (questions && questions.length > 0) {

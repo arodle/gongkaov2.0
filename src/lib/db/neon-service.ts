@@ -18,6 +18,59 @@ export async function getKnowledgeNodes(userId: string = DEFAULT_USER_ID) {
   return result;
 }
 
+export async function upsertKnowledgeNode(
+  userId: string,
+  node: {
+    id: string;
+    name: string;
+    parent_id?: string | null;
+    pos_x?: number;
+    pos_y?: number;
+    ps_score?: number;
+    node_type?: string;
+    content?: string;
+    annotation?: string;
+  }
+) {
+  await sql`
+    INSERT INTO knowledge_nodes (
+      id, user_id, name, parent_id, pos_x, pos_y, ps_score,
+      node_type, content, annotation, updated_at
+    ) VALUES (
+      ${node.id},
+      ${userId},
+      ${node.name},
+      ${node.parent_id || null},
+      ${node.pos_x || 0},
+      ${node.pos_y || 0},
+      ${node.ps_score ?? 50},
+      ${node.node_type || 'topic'},
+      ${node.content || null},
+      ${node.annotation || null},
+      NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      parent_id = EXCLUDED.parent_id,
+      pos_x = EXCLUDED.pos_x,
+      pos_y = EXCLUDED.pos_y,
+      ps_score = EXCLUDED.ps_score,
+      node_type = EXCLUDED.node_type,
+      content = EXCLUDED.content,
+      annotation = EXCLUDED.annotation,
+      updated_at = NOW()
+  `;
+}
+
+export async function deleteKnowledgeNodes(userId: string, nodeIds: string[]) {
+  if (nodeIds.length === 0) return 0;
+  const result = await sql`
+    DELETE FROM knowledge_nodes
+    WHERE user_id = ${userId} AND id = ANY(${nodeIds})
+  `;
+  return nodeIds.length;
+}
+
 export async function getMindMaps(userId: string = DEFAULT_USER_ID) {
   const result = await sql`
     SELECT id, name, data, created_at, updated_at

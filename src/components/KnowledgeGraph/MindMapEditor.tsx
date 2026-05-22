@@ -128,12 +128,12 @@ function NodeTreeItem({
         initial={{ opacity: 0, x: -10 }}
         animate={{ opacity: 1, x: 0 }}
         className={cn(
-          'flex items-center gap-1 px-2 py-1.5 rounded-lg cursor-pointer transition-colors group',
+          'flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-200 group',
           isSelected
-            ? 'bg-primary/10 text-primary'
-            : 'hover:bg-muted',
+            ? 'bg-primary/8 text-primary shadow-[0_1px_3px_rgba(59,130,246,0.08)]'
+            : 'hover:bg-muted/50',
         )}
-        style={{ paddingLeft: `${level * 20 + 8}px` }}
+        style={{ paddingLeft: `${level * 20 + 12}px` }}
         onClick={() => onSelect(node)}
         onContextMenu={(e: React.MouseEvent) => {
           e.preventDefault();
@@ -145,7 +145,10 @@ function NodeTreeItem({
             e.stopPropagation();
             onToggleExpand(node.id);
           }}
-          className="p-0.5 hover:bg-muted rounded"
+          className={cn(
+            'p-0.5 rounded shrink-0 transition-colors',
+            hasChildren ? 'hover:bg-muted-foreground/10' : ''
+          )}
         >
           {hasChildren ? (
             isExpanded ? (
@@ -159,54 +162,36 @@ function NodeTreeItem({
         </button>
 
         <span className={cn(
-          'w-2 h-2 rounded-full',
-          node.ps_score < 0 ? 'bg-red-500' :
-          node.ps_score < 80 ? 'bg-orange-500' :
-          node.ps_score < 150 ? 'bg-yellow-500' :
-          'bg-cyan-500'
+          'w-2 h-2 rounded-full shrink-0',
+          node.ps_score < 0 ? 'bg-red-400' :
+          node.ps_score < 80 ? 'bg-orange-400' :
+          node.ps_score < 150 ? 'bg-yellow-400' :
+          'bg-cyan-400'
         )} />
 
-        {isPinned && <Pin className="h-3 w-3 text-amber-500" />}
+        {isPinned && <Pin className="h-3 w-3 text-amber-400 shrink-0" />}
 
         <span className="flex-1 truncate text-sm font-medium">
           {node.name}
         </span>
-
-        <Badge variant="outline" className="text-[10px] h-5 px-1">
-          {node.ps_score}
-        </Badge>
-
-        {stats.correct > 0 && (
-          <span className="text-[10px] text-green-600 dark:text-green-400">
-            +{stats.correct}
-          </span>
-        )}
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 md:opacity-0 md:group-hover:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation();
-            onViewDetail(node);
-          }}
-          title="查看详情"
-        >
-          <Eye className="h-3 w-3" />
-        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
               onClick={(e) => e.stopPropagation()}
             >
               <MoreHorizontal className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => onViewDetail(node)}>
+              <Eye className="h-4 w-4 mr-2" />
+              查看详情
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onEdit(node)}>
               <Edit3 className="h-4 w-4 mr-2" />
               编辑节点
@@ -417,6 +402,20 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
         updated_at: new Date().toISOString(),
       });
 
+      const { syncNodeToNeon } = await import('@/lib/stores/appStore');
+      await syncNodeToNeon({
+        id: editingNode.id,
+        user_id: editingNode.user_id,
+        name: editForm.name,
+        parent_id: editingNode.parent_id,
+        pos_x: editingNode.pos_x,
+        pos_y: editingNode.pos_y,
+        ps_score: editingNode.ps_score,
+        node_type: editingNode.node_type,
+        content: editForm.content,
+        annotation: editForm.annotation,
+      });
+
       await useAppStore.getState().initialize();
       setShowEditDialog(false);
       setEditingNode(null);
@@ -448,6 +447,20 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
 
       await db.knowledge_nodes.add(newNode);
 
+      const { syncNodeToNeon } = await import('@/lib/stores/appStore');
+      await syncNodeToNeon({
+        id: newNode.id,
+        user_id: newNode.user_id,
+        name: newNode.name,
+        parent_id: newNode.parent_id,
+        pos_x: newNode.pos_x,
+        pos_y: newNode.pos_y,
+        ps_score: newNode.ps_score,
+        node_type: newNode.node_type,
+        content: newNode.content,
+        annotation: newNode.annotation,
+      });
+
       await createSafetySnapshot('添加节点');
 
       if (addParentId) {
@@ -468,7 +481,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
     try {
       await createSafetySnapshot('删除节点');
 
-      const { db } = await import('@/lib/db/database');
+      const { db, CURRENT_USER_ID } = await import('@/lib/db/database');
       const toDelete = new Set<string>();
 
       const collectChildren = (id: string) => {
@@ -477,7 +490,12 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
       };
       collectChildren(nodeId);
 
-      await db.knowledge_nodes.bulkDelete(Array.from(toDelete));
+      const deleteIds = Array.from(toDelete);
+      await db.knowledge_nodes.bulkDelete(deleteIds);
+
+      const { syncNodeDeleteToNeon } = await import('@/lib/stores/appStore');
+      await syncNodeDeleteToNeon(CURRENT_USER_ID, deleteIds);
+
       await useAppStore.getState().initialize();
 
       if (selectedNode && toDelete.has(selectedNode.id)) {
@@ -532,47 +550,57 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: sidebarWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="border-r bg-background flex flex-col min-h-0 shrink-0 relative"
+            transition={{ duration: 0.25 }}
+            className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col min-h-0 shrink-0 relative shadow-[2px_0_12px_rgba(0,0,0,0.04)] z-10"
           >
-            <div className="p-3 border-b space-y-2 shrink-0">
+            <div className="p-4 space-y-3 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="搜索节点..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8 h-9"
+                    className="pl-9 h-9 rounded-lg bg-muted/40 border-0"
                   />
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowOnlyWeak(!showOnlyWeak)}
-                  className={cn(showOnlyWeak && 'bg-red-100 text-red-600')}
-                >
-                  {showOnlyWeak ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowOnlyWeak(!showOnlyWeak)}
+                      className={cn('h-9 w-9 rounded-lg', showOnlyWeak && 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400')}
+                    >
+                      {showOnlyWeak ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>仅显示薄弱项</TooltipContent>
+                </Tooltip>
               </div>
 
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="sm" className="flex-1" onClick={expandAll}>
+              <div className="flex items-center gap-1.5">
+                <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={expandAll}>
                   <ChevronDown className="h-3 w-3 mr-1" />
                   展开
                 </Button>
-                <Button variant="outline" size="sm" className="flex-1" onClick={collapseAll}>
+                <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={collapseAll}>
                   <ChevronRight className="h-3 w-3 mr-1" />
                   折叠
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => handleAddChild('')}>
-                  <FolderPlus className="h-3 w-3" />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleAddChild('')}>
+                      <FolderPlus className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>添加根节点</TooltipContent>
+                </Tooltip>
               </div>
             </div>
 
             <ScrollArea className="flex-1 min-h-0">
-              <div className="p-2">
+              <div className="p-2 pb-4">
                 {rootNodes.map((node) => (
                   <NodeTreeItem
                     key={node.id}
@@ -595,154 +623,156 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
               </div>
             </ScrollArea>
 
+            <div className="p-3 border-t border-border/50 text-xs text-muted-foreground text-center">
+              共 {nodes.length} 个知识点
+            </div>
+
             <div
-              className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors z-10"
+              className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary transition-colors z-20"
               onMouseDown={handleResizeStart}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="p-3 border-b flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSidebar(!showSidebar)}
-            >
-              {showSidebar ? (
-                <PanelLeftClose className="h-4 w-4" />
-              ) : (
-                <PanelLeft className="h-4 w-4" />
-              )}
+      <div className="flex-1 flex items-center justify-center min-h-0 bg-muted/20">
+        {!showSidebar && (
+          <div className="flex flex-col items-center gap-3">
+            <Folder className="h-12 w-12 text-muted-foreground/20" />
+            <Button variant="outline" onClick={() => setShowSidebar(true)}>
+              <PanelLeft className="h-4 w-4 mr-2" />
+              打开知识树
             </Button>
-            <span className="text-sm font-medium">
-              {selectedNode ? getNodePath(selectedNode.id) : '选择节点查看详情'}
-            </span>
           </div>
-        </div>
+        )}
+        {showSidebar && selectedNode && (
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <div className="text-sm font-medium text-foreground">{selectedNode.name}</div>
+            <div className="text-xs">{getNodePath(selectedNode.id)}</div>
+          </div>
+        )}
+        {showSidebar && !selectedNode && (
+          <div className="flex flex-col items-center gap-3 text-muted-foreground">
+            <Folder className="h-12 w-12 text-muted-foreground/20" />
+            <p className="text-sm">选择左侧节点查看详情</p>
+          </div>
+        )}
+      </div>
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-6">
-            {selectedNode ? (
-              <div className="max-w-3xl mx-auto space-y-6">
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <CardTitle className="text-xl">{selectedNode.name}</CardTitle>
-                        <Badge variant="outline">{selectedNode.node_type}</Badge>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEditNode(selectedNode)}
-                        >
-                          <Edit3 className="h-4 w-4 mr-1" />
-                          编辑
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleAddChild(selectedNode.id)}
-                        >
-                          <FolderPlus className="h-4 w-4 mr-1" />
-                          添加子节点
-                        </Button>
+      <Sheet open={!!selectedNode} onOpenChange={(open) => !open && setSelectedNode(null)}>
+        <SheetContent side="right" className="w-[420px] sm:w-[520px] lg:w-[600px] p-0 flex flex-col">
+          <SheetHeader className="p-5 border-b border-border/50">
+            <SheetTitle className="text-lg font-bold truncate">{selectedNode?.name}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {selectedNode?.name} 的详细信息和统计数据
+            </SheetDescription>
+            <div className="flex items-center gap-2 mt-1">
+              <Badge variant="secondary" className="text-[10px]">
+                {selectedNode?.node_type}
+              </Badge>
+              <span className="text-xs text-muted-foreground truncate">
+                {selectedNode && getNodePath(selectedNode.id)}
+              </span>
+            </div>
+          </SheetHeader>
+
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="p-5 space-y-6">
+              {selectedNode && (
+                <>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleEditNode(selectedNode)}
+                      className="flex-1"
+                    >
+                      <Edit3 className="h-4 w-4 mr-1" />
+                      编辑
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddChild(selectedNode.id)}
+                      className="flex-1"
+                    >
+                      <FolderPlus className="h-4 w-4 mr-1" />
+                      添加子节点
+                    </Button>
+                  </div>
+
+                  {selectedNode.content && (
+                    <div>
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">内容</h4>
+                      <div className="rounded-xl bg-muted/40 p-4">
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{selectedNode.content}</p>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {selectedNode.content && (
-                      <div>
-                        <h4 className="text-sm font-medium mb-2 text-muted-foreground">内容</h4>
-                        <div className="max-h-48 overflow-auto rounded-md border">
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words p-2">{selectedNode.content}</p>
-                        </div>
-                      </div>
-                    )}
+                  )}
 
-                    {selectedNode.annotation && (
-                      <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                        <div className="flex items-center gap-2 mb-1">
-                          <AlertTriangle className="h-4 w-4 text-amber-600" />
-                          <h4 className="text-sm font-medium text-amber-800 dark:text-amber-200">学习笔记</h4>
-                        </div>
-                        <div className="max-h-48 overflow-auto rounded">
-                          <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap break-words">{selectedNode.annotation}</p>
-                        </div>
+                  {selectedNode.annotation && (
+                    <div className="rounded-xl bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border-l-[3px] border-l-amber-400 p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        <h4 className="text-sm font-semibold text-foreground">学习笔记</h4>
                       </div>
-                    )}
-
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="p-3 rounded-lg bg-muted text-center">
-                        <div className="text-2xl font-bold">{selectedNode.ps_score}</div>
-                        <div className="text-xs text-muted-foreground">PS分数</div>
-                      </div>
-                      <div className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 text-center">
-                        <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                          {useAppStore.getState().getNodeStats(selectedNode.id).correct}
-                        </div>
-                        <div className="text-xs text-green-600/70">正确次数</div>
-                      </div>
-                      <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-center">
-                        <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-                          {useAppStore.getState().getNodeStats(selectedNode.id).wrong}
-                        </div>
-                        <div className="text-xs text-red-600/70">错误次数</div>
-                      </div>
-                      <div className="p-3 rounded-lg bg-muted text-center">
-                        <div className="text-2xl font-bold text-muted-foreground">
-                          {nodes.filter(n => n.parent_id === selectedNode.id).length}
-                        </div>
-                        <div className="text-xs text-muted-foreground">子节点数</div>
-                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">{selectedNode.annotation}</p>
                     </div>
-                  </CardContent>
-                </Card>
+                  )}
 
-                {nodeQuestions.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <FileText className="h-5 w-5" />
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-4 rounded-xl bg-muted/40 flex flex-col items-center gap-1">
+                      <div className="text-2xl font-bold">{selectedNode.ps_score}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">PS分数</div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex flex-col items-center gap-1">
+                      <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                        {useAppStore.getState().getNodeStats(selectedNode.id).correct}
+                      </div>
+                      <div className="text-[10px] text-emerald-600/70 uppercase tracking-wider">正确</div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-red-50 dark:bg-red-900/20 flex flex-col items-center gap-1">
+                      <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                        {useAppStore.getState().getNodeStats(selectedNode.id).wrong}
+                      </div>
+                      <div className="text-[10px] text-red-600/70 uppercase tracking-wider">错误</div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-muted/40 flex flex-col items-center gap-1">
+                      <div className="text-2xl font-bold text-muted-foreground">
+                        {nodes.filter(n => n.parent_id === selectedNode.id).length}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">子节点</div>
+                    </div>
+                  </div>
+
+                  {nodeQuestions.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                         相关题目 ({nodeQuestions.length})
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
+                      </h4>
+                      <div className="space-y-2">
                         {nodeQuestions.slice(0, 5).map((q) => (
                           <div
                             key={q.id}
-                            className="p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors cursor-pointer"
+                            className="p-3 rounded-xl bg-muted/30 hover:bg-muted/60 transition-colors cursor-pointer"
                           >
-                            <p className="text-sm line-clamp-2">{q.content}</p>
+                            <p className="text-sm line-clamp-2 leading-relaxed">{q.content}</p>
                             <div className="mt-2 flex items-center gap-2">
-                              <Badge variant="outline" className="text-xs">
+                              <Badge variant="secondary" className="text-[10px]">
                                 {(q.knowledgePath || '').split('/').pop()}
                               </Badge>
                             </div>
                           </div>
                         ))}
                       </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <Folder className="h-16 w-16 text-muted-foreground/30 mb-4" />
-                <h3 className="text-lg font-medium mb-2">选择节点</h3>
-                <p className="text-sm text-muted-foreground">
-                  点击左侧列表中的节点，查看详情
-                </p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
         <DialogContent className="max-w-md">
@@ -765,6 +795,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                 onChange={(e) => setEditForm(prev => ({ ...prev, content: e.target.value }))}
                 placeholder="输入内容说明（可选）"
                 rows={3}
+                className="max-h-32"
               />
             </div>
             <div className="space-y-2">
@@ -773,7 +804,8 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
                 value={editForm.annotation}
                 onChange={(e) => setEditForm(prev => ({ ...prev, annotation: e.target.value }))}
                 placeholder="输入学习笔记（可选）"
-                rows={2}
+                rows={3}
+                className="max-h-32"
               />
             </div>
           </div>
