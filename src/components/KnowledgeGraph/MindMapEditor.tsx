@@ -135,7 +135,7 @@ function NodeTreeItem({
         )}
         style={{ paddingLeft: `${level * 20 + 8}px` }}
         onClick={() => onSelect(node)}
-        onContextMenu={(e) => {
+        onContextMenu={(e: React.MouseEvent) => {
           e.preventDefault();
           onSelect(node);
         }}

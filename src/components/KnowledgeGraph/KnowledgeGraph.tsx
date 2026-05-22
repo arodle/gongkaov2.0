@@ -356,7 +356,6 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
             animationDuration: 500,
           },
           behaviors: ['drag-canvas', 'zoom-canvas'],
-          autoFit: false,
           padding: 60,
         });
 
@@ -395,7 +394,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
             graph.setElementVisibility(id, isCollapsed ? 'visible' : 'hidden');
           });
 
-          graphData.edges.forEach((edge: any) => {
+          graphData.edges?.forEach((edge: any) => {
             if (descendants.has(edge.source) || descendants.has(edge.target)) {
               graph.setElementVisibility(edge.id, isCollapsed ? 'visible' : 'hidden');
             }
@@ -418,10 +417,8 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
         });
 
         graph.render();
-        graph.fitView({
-          padding: 80
-        });
-        
+        graph.fitView();
+
         graphRef.current = graph;
         setIsReady(true);
       } catch (error) {
@@ -454,7 +451,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           graphRef.current.draw();
         } else {
           graphRef.current.updateNodeData(
-            graphData.nodes.map(
+            (graphData.nodes || []).map(
               n => ({
                 id: n.id,
                 data: n.data

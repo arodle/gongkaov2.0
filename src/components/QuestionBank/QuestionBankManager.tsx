@@ -516,7 +516,7 @@ export function QuestionBankManager() {
                               {question.knowledgePath || getLinkedNodeName(question.linkedAngleId)}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1 sm:hidden" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1 sm:hidden" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
                               size="icon"

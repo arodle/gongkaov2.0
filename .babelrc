@@ -9,18 +9,10 @@
       }
     ]
   ],
-  "plugins": [
-    "@react-dev-inspector/babel-plugin"
-  ],
   "env": {
-    "production": {
+    "development": {
       "plugins": [
-        [
-          "@react-dev-inspector/babel-plugin",
-          {
-            "excludes": [".next"]
-          }
-        ]
+        "@react-dev-inspector/babel-plugin"
       ]
     }
   }
