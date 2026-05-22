@@ -4,12 +4,24 @@
       "next/babel",
       {
         "preset-react": {
-          "development": true
+          "runtime": "automatic"
         }
       }
     ]
   ],
   "plugins": [
     "@react-dev-inspector/babel-plugin"
-  ]
+  ],
+  "env": {
+    "production": {
+      "plugins": [
+        [
+          "@react-dev-inspector/babel-plugin",
+          {
+            "excludes": [".next"]
+          }
+        ]
+      ]
+    }
+  }
 }
