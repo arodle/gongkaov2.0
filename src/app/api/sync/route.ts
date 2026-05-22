@@ -4,7 +4,6 @@ import {
   getKnowledgeNodes,
   upsertMindMap,
   getQuestions,
-  getFullQuestions,
   upsertQuestions,
   getAnswerRecords,
   insertAnswerRecords,
