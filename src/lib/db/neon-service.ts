@@ -119,7 +119,7 @@ export async function upsertQuestions(
     await sql`
       INSERT INTO question_bank (
         id, user_id, question_text, option_a, option_b, option_c, option_d,
-        correct_answer, explanation, knowledge_path, linked_angle_id, source, mind_map_id
+        correct_answer, explanation, knowledge_path, linked_angle_id, source, type, reference, mind_map_id
       ) VALUES (
         ${id},
         ${userId},
@@ -132,7 +132,9 @@ export async function upsertQuestions(
         ${q.explanation as string || null},
         ${q.knowledge_path as string || null},
         ${q.linked_angle_id as string || null},
-        ${(q.source as string) || 'manual'},
+        ${(q.source as string) || (q.type as string) || 'manual'},
+        ${(q.type as string) || (q.source as string) || 'real'},
+        ${q.reference as string || null},
         ${q.mind_map_id as string || null}
       )
       ON CONFLICT (id) DO UPDATE SET
@@ -146,6 +148,8 @@ export async function upsertQuestions(
         knowledge_path = EXCLUDED.knowledge_path,
         linked_angle_id = EXCLUDED.linked_angle_id,
         source = EXCLUDED.source,
+        type = EXCLUDED.type,
+        reference = EXCLUDED.reference,
         mind_map_id = EXCLUDED.mind_map_id
     `;
   }

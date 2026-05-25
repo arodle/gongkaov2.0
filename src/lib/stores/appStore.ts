@@ -370,6 +370,7 @@ async function fetchFromNeon() {
       linkedAngleName: '',
       knowledgePath: q.knowledge_path,
       source: q.source,
+      type: (q.type as 'real' | 'simulated') || (q.source as 'real' | 'simulated'),
       reference: q.reference,
       createdAt: new Date().toISOString(),
     }));

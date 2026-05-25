@@ -183,7 +183,7 @@ export function QuestionBankManager() {
     setShowQuestionDialog(true);
   }, []);
 
-  const handleSaveQuestion = useCallback(() => {
+  const handleSaveQuestion = useCallback(async () => {
     if (!formData.content || !formData.correctAnswer) return;
 
     const questionData: QuestionBankItem = {
@@ -197,6 +197,7 @@ export function QuestionBankManager() {
       linkedAngleName: formData.linkedAngleName,
       knowledgePath: formData.knowledgePath,
       type: formData.type,
+      source: formData.type,
       reference: formData.reference,
       createdAt: editingQuestion?.createdAt || new Date().toISOString(),
     };
@@ -206,6 +207,28 @@ export function QuestionBankManager() {
     } else {
       addQuestion(questionData);
     }
+
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        questions: [{
+          id: questionData.id,
+          question_text: questionData.content,
+          option_a: questionData.options[0]?.text || '',
+          option_b: questionData.options[1]?.text || '',
+          option_c: questionData.options[2]?.text || '',
+          option_d: questionData.options[3]?.text || '',
+          correct_answer: questionData.correctAnswer,
+          explanation: questionData.explanation,
+          knowledge_path: questionData.knowledgePath,
+          linked_angle_id: questionData.linkedAngleId,
+          source: questionData.type,
+          type: questionData.type,
+          reference: questionData.reference,
+        }],
+      }),
+    }).catch(err => console.error('Failed to sync question to Neon:', err));
 
     setShowQuestionDialog(false);
     setFormData(initialFormData);

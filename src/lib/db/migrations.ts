@@ -53,10 +53,15 @@ export async function initTables() {
       knowledge_path VARCHAR(500),
       linked_angle_id VARCHAR(255),
       source VARCHAR(50) DEFAULT 'manual',
+      type VARCHAR(50) DEFAULT 'real',
+      reference TEXT,
       mind_map_id VARCHAR(255),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `;
+
+  await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'real'`;
+  await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS reference TEXT`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS answer_records (
