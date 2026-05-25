@@ -58,7 +58,7 @@ export async function POST() {
       knowledge_path: q.knowledgePath,
       linked_angle_id: q.linkedAngleId,
       source: q.source,
-      type: q.type || 'real',
+      type: 'real',
       reference: null,
       mind_map_id: 'default_mindmap',
     }));
