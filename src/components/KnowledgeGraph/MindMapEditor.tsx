@@ -416,7 +416,12 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
         annotation: editForm.annotation,
       });
 
-      await useAppStore.getState().initialize();
+      useAppStore.getState().updateNode({
+        id: editingNode.id,
+        name: editForm.name,
+        content: editForm.content || undefined,
+        annotation: editForm.annotation || undefined,
+      });
       setShowEditDialog(false);
       setEditingNode(null);
     } catch (error) {
@@ -463,11 +468,21 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
 
       await createSafetySnapshot('添加节点');
 
+      useAppStore.getState().addNode({
+        id: newNode.id,
+        name: newNode.name,
+        parent_id: newNode.parent_id,
+        pos_x: newNode.pos_x,
+        pos_y: newNode.pos_y,
+        node_type: newNode.node_type,
+        content: newNode.content,
+        annotation: newNode.annotation,
+      });
+
       if (addParentId) {
         setExpandedNodes(prev => new Set([...prev, addParentId]));
       }
 
-      await useAppStore.getState().initialize();
       setShowAddDialog(false);
       setAddParentId(null);
     } catch (error) {
@@ -496,7 +511,7 @@ export function MindMapEditor({ className }: MindMapEditorProps) {
       const { syncNodeDeleteToNeon } = await import('@/lib/stores/appStore');
       await syncNodeDeleteToNeon(CURRENT_USER_ID, deleteIds);
 
-      await useAppStore.getState().initialize();
+      useAppStore.getState().deleteNode(nodeId);
 
       if (selectedNode && toDelete.has(selectedNode.id)) {
         setSelectedNode(null);
