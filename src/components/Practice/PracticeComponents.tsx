@@ -1,34 +1,14 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
-import type { QuestionBankItem } from '@/types';
+import type { BehaviorEventRecord, BehaviorEventType, QuestionBankItem } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   ChevronLeft,
   ChevronRight,
@@ -39,13 +19,134 @@ import {
   Lightbulb,
   AlertTriangle,
   BookOpen,
-  PenTool,
   ArrowLeft,
   Send,
-  X,
   Timer,
-  ListChecks,
+  Highlighter,
+  Circle,
+  Ban,
+  StickyNote,
 } from 'lucide-react';
+
+interface TextSelectionInfo {
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface TextMark {
+  id: string;
+  type: 'highlight' | 'circle';
+  start: number;
+  end: number;
+  text: string;
+}
+
+function getSelectionInfo(container: HTMLElement | null): TextSelectionInfo | null {
+  if (!container) return null;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+
+  const range = selection.getRangeAt(0);
+  if (!container.contains(range.commonAncestorContainer)) return null;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let start: number | null = null;
+  let end: number | null = null;
+  let current = walker.nextNode();
+
+  while (current) {
+    const length = current.textContent?.length || 0;
+    if (current === range.startContainer) start = offset + range.startOffset;
+    if (current === range.endContainer) end = offset + range.endOffset;
+    offset += length;
+    current = walker.nextNode();
+  }
+
+  if (start === null || end === null || end <= start) return null;
+  return { text: range.toString(), start, end };
+}
+
+function renderMarkedText(text: string, marks: TextMark[]) {
+  const sorted = [...marks]
+    .filter(mark => mark.start >= 0 && mark.end <= text.length && mark.end > mark.start)
+    .sort((a, b) => a.start - b.start);
+  const result: React.ReactNode[] = [];
+  let cursor = 0;
+
+  sorted.forEach(mark => {
+    if (mark.start < cursor) return;
+    if (mark.start > cursor) result.push(text.slice(cursor, mark.start));
+
+    const content = text.slice(mark.start, mark.end);
+    result.push(
+      <span
+        key={mark.id}
+        className={[
+          mark.type === 'highlight'
+            ? 'rounded bg-yellow-200/80 px-0.5'
+            : 'rounded-full border-2 border-red-400 px-1',
+        ].join(' ')}
+      >
+        {content}
+      </span>
+    );
+    cursor = mark.end;
+  });
+
+  if (cursor < text.length) result.push(text.slice(cursor));
+  return result;
+}
+
+function restoreQuestionBehaviorEvents(events: BehaviorEventRecord[], textLength: number) {
+  const marks: TextMark[] = [];
+  const struckOptions = new Set<string>();
+  let latestNote = '';
+  let maxOrder = 0;
+
+  const sorted = [...events].sort((a, b) => {
+    const orderA = typeof a.metadata?.order === 'number' ? a.metadata.order : 0;
+    const orderB = typeof b.metadata?.order === 'number' ? b.metadata.order : 0;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.startTime.localeCompare(b.startTime);
+  });
+
+  sorted.forEach(event => {
+    const order = typeof event.metadata?.order === 'number' ? event.metadata.order : 0;
+    maxOrder = Math.max(maxOrder, order);
+
+    if (event.eventType === 'highlight' || event.eventType === 'circle') {
+      const startOffset = event.metadata?.startOffset;
+      const endOffset = event.metadata?.endOffset;
+      if (typeof startOffset === 'number' && typeof endOffset === 'number' && endOffset <= textLength) {
+        marks.push({
+          id: event.id || `${event.eventType}_${startOffset}_${endOffset}`,
+          type: event.eventType,
+          start: startOffset,
+          end: endOffset,
+          text: typeof event.metadata?.selectedText === 'string' ? event.metadata.selectedText : '',
+        });
+      }
+    }
+
+    if (event.eventType === 'strike') {
+      const optionLabel = typeof event.metadata?.optionLabel === 'string'
+        ? event.metadata.optionLabel
+        : event.target.replace('option:', '');
+      const active = event.metadata?.active !== false;
+      if (active) struckOptions.add(optionLabel);
+      else struckOptions.delete(optionLabel);
+    }
+
+    if (event.eventType === 'note' && typeof event.metadata?.note === 'string') {
+      latestNote = event.metadata.note;
+    }
+  });
+
+  return { marks, struckOptions, latestNote, maxOrder };
+}
 
 interface QuestionCardProps {
   question: QuestionBankItem;
@@ -72,13 +173,11 @@ export function QuestionCard({
   questionNumber,
   totalQuestions,
   onAnswer,
-  showDrawing = false,
   onPrev,
   onNext,
   onSubmit,
   onExit,
   canGoPrev,
-  canGoNext,
   isLastQuestion,
   hasAnswered,
   elapsedTime,
@@ -88,17 +187,116 @@ export function QuestionCard({
 }: QuestionCardProps) {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [showResult, setShowResult] = useState(false);
-  const [startTime, setStartTime] = useState(Date.now());
+  const [startTime, setStartTime] = useState(() => Date.now());
   const [showExplanation, setShowExplanation] = useState(false);
-
+  const [textMarks, setTextMarks] = useState<TextMark[]>([]);
+  const [struckOptions, setStruckOptions] = useState<Set<string>>(new Set());
+  const [noteDraft, setNoteDraft] = useState('');
+  const questionTextRef = useRef<HTMLParagraphElement | null>(null);
+  const noteStartTimeRef = useRef<string | null>(null);
+  const eventOrderRef = useRef(0);
+  const recordBehaviorEvent = useAppStore(state => state.recordBehaviorEvent);
+  const behaviorEvents = useAppStore(state => state.behaviorEvents);
+  const loadBehaviorEventsForQuestion = useAppStore(state => state.loadBehaviorEventsForQuestion);
+  const questionBehaviorEvents = useMemo(
+    () => behaviorEvents.filter(event => event.questionId === question.id),
+    [behaviorEvents, question.id],
+  );
   useEffect(() => {
     setSelectedOption(userAnswer || null);
     setShowResult(!!userAnswer);
     setStartTime(Date.now());
     setShowExplanation(false);
+    setTextMarks([]);
+    setStruckOptions(new Set());
+    setNoteDraft('');
+    noteStartTimeRef.current = null;
+    eventOrderRef.current = 0;
   }, [question.id, userAnswer]);
 
+  useEffect(() => {
+    void loadBehaviorEventsForQuestion(question.id);
+  }, [loadBehaviorEventsForQuestion, question.id]);
+
+  useEffect(() => {
+    const restored = restoreQuestionBehaviorEvents(questionBehaviorEvents, question.content.length);
+    setTextMarks(restored.marks);
+    setStruckOptions(restored.struckOptions);
+    setNoteDraft(restored.latestNote);
+    eventOrderRef.current = restored.maxOrder;
+  }, [question.content.length, questionBehaviorEvents]);
+
+  const recordEvent = useCallback((
+    eventType: BehaviorEventType,
+    target: string,
+    metadata: Record<string, unknown>,
+    startTimeValue?: string,
+  ) => {
+    const now = new Date().toISOString();
+    eventOrderRef.current += 1;
+    recordBehaviorEvent({
+      questionId: question.id,
+      eventType,
+      target,
+      startTime: startTimeValue || now,
+      endTime: now,
+      metadata: {
+        order: eventOrderRef.current,
+        elapsedMs: Date.now() - startTime,
+        ...metadata,
+      },
+    });
+  }, [question.id, recordBehaviorEvent, startTime]);
+
+  const handleTextMark = useCallback((type: 'highlight' | 'circle') => {
+    const selectionInfo = getSelectionInfo(questionTextRef.current);
+    if (!selectionInfo) return;
+
+    const id = `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setTextMarks(prev => [...prev, { id, type, ...selectionInfo }]);
+    recordEvent(type, 'question_text', {
+      selectedText: selectionInfo.text,
+      startOffset: selectionInfo.start,
+      endOffset: selectionInfo.end,
+    });
+    window.getSelection()?.removeAllRanges();
+  }, [recordEvent]);
+
+  const handleStrikeOption = useCallback((label: string, optionText: string) => {
+    setStruckOptions(prev => {
+      const next = new Set(prev);
+      const nextState = !next.has(label);
+      if (nextState) next.add(label);
+      else next.delete(label);
+      recordEvent('strike', `option:${label}`, {
+        optionLabel: label,
+        optionText,
+        active: nextState,
+      });
+      return next;
+    });
+  }, [recordEvent]);
+
+  const handleSaveNote = useCallback(() => {
+    const note = noteDraft.trim();
+    if (!note) return;
+
+    recordEvent('note', 'question_note', { note }, noteStartTimeRef.current || undefined);
+    setNoteDraft('');
+    noteStartTimeRef.current = null;
+  }, [noteDraft, recordEvent]);
+
   const handleSelectOption = useCallback((label: string) => {
+    const previousAnswer = selectedOption || userAnswer;
+    if (previousAnswer && previousAnswer !== label) {
+      recordEvent('answer_change', `option:${label}`, {
+        from: previousAnswer,
+        to: label,
+      });
+    } else if (!previousAnswer) {
+      recordEvent('answer_select', `option:${label}`, { selectedAnswer: label });
+    }
+
     if (answerMode === 'batch') {
       setSelectedOption(label);
       onSelectAnswer?.(label);
@@ -113,10 +311,9 @@ export function QuestionCard({
     const isCorrect = label === question.correctAnswer;
     const answerTime = Date.now() - startTime;
 
-    setTimeout(() => {
-      onAnswer?.(label, isCorrect, answerTime);
-    }, 100);
-  }, [answerMode, showResult, question, startTime, onAnswer, onSelectAnswer]);
+    onSelectAnswer?.(label);
+    onAnswer?.(label, isCorrect, answerTime);
+  }, [answerMode, userAnswer, selectedOption, showResult, question, startTime, onAnswer, onSelectAnswer, recordEvent]);
 
   const isCorrect = answerMode === 'batch' ? false : (selectedOption || userAnswer) === question.correctAnswer;
 
@@ -159,20 +356,37 @@ export function QuestionCard({
         className="h-1"
       />
 
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border bg-white/80 p-1.5 shadow-sm sm:flex-wrap sm:gap-2 sm:rounded-xl sm:p-2">
+        <Button type="button" variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 px-2 sm:h-9 sm:px-3" onClick={() => handleTextMark('highlight')} aria-label="高亮选中文字">
+          <Highlighter className="h-4 w-4" />
+          <span className="hidden sm:inline">高亮</span>
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 px-2 sm:h-9 sm:px-3" onClick={() => handleTextMark('circle')} aria-label="圈选选中文字">
+          <Circle className="h-4 w-4" />
+          <span className="hidden sm:inline">圈选</span>
+        </Button>
+        <Badge variant="secondary" className="shrink-0 text-[11px] sm:text-xs">
+          选中题干文字后使用
+        </Badge>
+      </div>
+
       <Card className={`border-2 transition-colors ${
         answerMode === 'batch' && !hasAnswered
           ? 'border-transparent'
           : shouldShowResult
           ? isCorrect
-            ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+            ? 'border-[#b7e3ff] bg-[#b7e3ff]/30 dark:bg-violet-900/20'
             : 'border-red-500 bg-red-50 dark:bg-red-900/20'
           : (answerMode === 'batch' && userAnswer)
           ? 'border-primary bg-primary/5'
           : 'border-transparent'
       }`}>
         <CardContent className="p-4 sm:p-6">
-          <p className="text-base sm:text-lg leading-relaxed whitespace-pre-line">
-            {question.content}
+          <p
+            ref={questionTextRef}
+            className="text-base sm:text-lg leading-relaxed whitespace-pre-line"
+          >
+            {renderMarkedText(question.content, textMarks)}
           </p>
         </CardContent>
       </Card>
@@ -188,7 +402,7 @@ export function QuestionCard({
             }
           } else if (shouldShowResult) {
             if (option.label === question.correctAnswer) {
-              optionClass = 'border-green-500 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+              optionClass = 'border-[#b7e3ff] bg-[#b7e3ff]/35 text-[#5e5394] dark:bg-violet-900/30 dark:text-violet-200';
             } else if (option.label === currentAnswer && !isCorrect) {
               optionClass = 'border-red-500 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 line-through';
             } else {
@@ -198,28 +412,69 @@ export function QuestionCard({
             optionClass = 'border-primary bg-primary/10';
           }
 
+          const isStruck = struckOptions.has(option.label);
+
           return (
-            <motion.button
+            <div
               key={option.label}
-              whileHover={!shouldShowResult ? { scale: 1.01 } : {}}
-              whileTap={!shouldShowResult ? { scale: 0.99 } : {}}
-              onClick={() => handleSelectOption(option.label)}
-              disabled={shouldShowResult}
-              className={`w-full p-3 sm:p-4 rounded-xl text-left flex items-start gap-2 sm:gap-3 ${optionClass}`}
+              className="flex items-stretch gap-2 rounded-xl"
             >
-              <span className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center font-semibold text-sm">
-                {option.label}
-              </span>
-              <span className="flex-1 pt-0.5 sm:pt-1 text-sm sm:text-base">{option.text}</span>
-              {answerMode !== 'batch' && shouldShowResult && option.label === question.correctAnswer && (
-                <CheckCircle2 className="h-5 w-5 sm:h-6 sm:w-6 text-green-500 flex-shrink-0" />
-              )}
-              {answerMode !== 'batch' && shouldShowResult && option.label === currentAnswer && !isCorrect && (
-                <XCircle className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 flex-shrink-0" />
-              )}
-            </motion.button>
+              <Button
+                type="button"
+                variant={isStruck ? 'destructive' : 'outline'}
+                size="icon"
+                className="mt-1 h-9 w-9 shrink-0"
+                onClick={() => handleStrikeOption(option.label, option.text)}
+                aria-label={`划掉选项 ${option.label}`}
+              >
+                <Ban className="h-4 w-4" />
+              </Button>
+              <motion.button
+                whileHover={!shouldShowResult ? { scale: 1.01 } : {}}
+                whileTap={!shouldShowResult ? { scale: 0.99 } : {}}
+                onClick={() => handleSelectOption(option.label)}
+                disabled={shouldShowResult}
+                className={`w-full p-3 sm:p-4 rounded-xl text-left flex items-start gap-2 sm:gap-3 ${optionClass} ${isStruck ? 'opacity-60' : ''}`}
+              >
+                <span className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center font-semibold text-sm">
+                  {option.label}
+                </span>
+                <span className={`flex-1 pt-0.5 sm:pt-1 text-sm sm:text-base ${isStruck ? 'line-through decoration-2' : ''}`}>{option.text}</span>
+                {answerMode !== 'batch' && shouldShowResult && option.label === question.correctAnswer && (
+                  <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-[#a49aff] sm:h-6 sm:w-6" />
+                )}
+                {answerMode !== 'batch' && shouldShowResult && option.label === currentAnswer && !isCorrect && (
+                  <XCircle className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 flex-shrink-0" />
+                )}
+              </motion.button>
+            </div>
           );
         })}
+      </div>
+
+      <div className="rounded-lg border bg-white/80 p-2.5 shadow-sm sm:rounded-xl sm:p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+          <StickyNote className="h-4 w-4" />
+          简短备注
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={noteDraft}
+            onFocus={() => {
+              noteStartTimeRef.current ||= new Date().toISOString();
+            }}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') handleSaveNote();
+            }}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="记录一句思路或疑问"
+          />
+          <Button type="button" size="sm" onClick={handleSaveNote} disabled={!noteDraft.trim()} aria-label="保存备注">
+            <span className="hidden sm:inline">保存</span>
+            <span className="sm:hidden">存</span>
+          </Button>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -232,7 +487,7 @@ export function QuestionCard({
           >
             <div className={`p-3 sm:p-4 rounded-xl flex items-center gap-2 sm:gap-3 ${
               isCorrect
-                ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                ? 'bg-[#b7e3ff]/35 text-[#5e5394] dark:bg-violet-900/30 dark:text-violet-200'
                 : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
             }`}>
               {isCorrect ? (
@@ -271,7 +526,15 @@ export function QuestionCard({
                 {question.images && question.images.length > 0 && (
                   <div className="mt-3 sm:mt-4 grid grid-cols-1 gap-2">
                     {question.images.map((img, idx) => (
-                      <img key={idx} src={img} alt={`解析图片 ${idx + 1}`} className="rounded-lg border max-h-48 sm:max-h-64 object-contain" />
+                      <Image
+                        key={idx}
+                        src={img}
+                        alt={`解析图片 ${idx + 1}`}
+                        width={720}
+                        height={360}
+                        unoptimized
+                        className="h-auto max-h-48 w-auto rounded-lg border object-contain sm:max-h-64"
+                      />
                     ))}
                   </div>
                 )}
@@ -308,8 +571,8 @@ export function QuestionCard({
               <Button
                 variant="default"
                 onClick={onSubmit}
-                className="flex-1 sm:flex-none sm:w-auto bg-green-600 hover:bg-green-700"
-                disabled={answerMode === 'batch' ? !hasAnswered : false}
+                className="flex-1 sm:flex-none sm:w-auto"
+                disabled={!userAnswer || (answerMode === 'batch' ? !hasAnswered : false)}
               >
                 <Send className="h-4 w-4 mr-1" />
                 提交整卷
@@ -337,8 +600,8 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
       title: '顺序练习',
       description: '按知识图谱层级依次练习，从基础开始稳步提升',
       badge: `${nodes.length} 个知识点`,
-      bgColor: 'bg-blue-100 dark:bg-blue-900/30',
-      iconColor: 'text-blue-600 dark:text-blue-400',
+      bgColor: 'bg-sky-50 dark:bg-sky-900/30',
+      iconColor: 'text-sky-600 dark:text-sky-400',
     },
     {
       mode: 'random' as const,
@@ -346,8 +609,8 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
       title: '随机练习',
       description: '从全部题库随机抽取，全面覆盖各个知识点',
       badge: '随机打乱',
-      bgColor: 'bg-purple-100 dark:bg-purple-900/30',
-      iconColor: 'text-purple-600 dark:text-purple-400',
+      bgColor: 'bg-violet-50 dark:bg-violet-900/30',
+      iconColor: 'text-violet-500 dark:text-violet-300',
     },
     {
       mode: 'targeted' as const,
@@ -356,8 +619,8 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
       description: '专注练习 PS < 80 的薄弱知识点，针对性强化',
       badge: '针对薄弱点',
       badgeVariant: 'destructive' as const,
-      bgColor: 'bg-orange-100 dark:bg-orange-900/30',
-      iconColor: 'text-orange-600 dark:text-orange-400',
+      bgColor: 'bg-rose-50 dark:bg-rose-900/30',
+      iconColor: 'text-rose-500 dark:text-rose-300',
       weakCount: weakNodes.length,
     },
     {
@@ -366,8 +629,8 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
       title: '套卷练习',
       description: '完整试卷定时模拟，检验整体学习效果',
       badge: '计时模式',
-      bgColor: 'bg-green-100 dark:bg-green-900/30',
-      iconColor: 'text-green-600 dark:text-green-400',
+      bgColor: 'bg-[#ffccff]/45 dark:bg-violet-900/30',
+      iconColor: 'text-[#8f83f5] dark:text-violet-300',
     },
   ];
 
@@ -383,7 +646,7 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
             className="w-full"
           >
             <Card
-              className="cursor-pointer hover:border-primary transition-colors h-full"
+              className="h-full cursor-pointer border-white/70 bg-white/86 shadow-[0_16px_40px_rgba(31,80,96,0.06)] transition-colors hover:border-primary/35 hover:bg-white"
               onClick={() => onSelectMode(card.mode)}
             >
               <CardContent className="p-3 sm:p-4 md:p-6">
@@ -414,13 +677,21 @@ interface PracticeSessionProps {
   questions: QuestionBankItem[];
   mode: 'sequence' | 'random' | 'targeted' | 'exam';
   answerMode?: 'instant' | 'batch';
-  onComplete: (results: { correct: number; wrong: number; details: any[] }) => void;
+  onComplete: (results: { correct: number; wrong: number; details: PracticeAnswerResult[] }) => void;
   onExit: () => void;
+}
+
+interface PracticeAnswerResult {
+  question: QuestionBankItem;
+  selectedAnswer: string;
+  isCorrect: boolean;
+  answerTime: number;
+  timestamp: number;
 }
 
 export function PracticeSession({ questions, mode, answerMode = 'instant', onComplete, onExit }: PracticeSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<any[]>([]);
+  const [answers, setAnswers] = useState<PracticeAnswerResult[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [userAnswers, setUserAnswers] = useState<{ [key: number]: string }>({});
@@ -429,7 +700,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!isRunning) {
+    if (!isRunning || questions.length === 0) {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -446,26 +717,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
         clearInterval(timerRef.current);
       }
     };
-  }, [isRunning]);
-
-  if (!questions || questions.length === 0) {
-    return (
-      <div className="max-w-2xl mx-auto p-4 sm:p-6">
-        <Card className="border-2 border-amber-500 bg-amber-50 dark:bg-amber-900/20">
-          <CardContent className="p-6 sm:p-8 text-center">
-            <AlertTriangle className="h-10 w-10 sm:h-12 sm:w-12 mx-auto mb-3 sm:mb-4 text-amber-500" />
-            <h3 className="text-base sm:text-lg font-semibold mb-2">暂无练习题目</h3>
-            <p className="text-sm text-muted-foreground">
-              题库为空或没有符合当前筛选条件的题目
-            </p>
-            <Button variant="outline" className="mt-3 sm:mt-4" onClick={onExit}>
-              返回练习选择
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  }, [isRunning, questions.length]);
 
   const currentQuestion = questions[currentIndex];
   const currentUserAnswer = userAnswers[currentIndex];
@@ -473,6 +725,8 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   const hasAnsweredAll = Object.keys(userAnswers).length === questions.length;
 
   const handleAnswer = useCallback(async (selectedAnswer: string, isCorrect: boolean, answerTime: number) => {
+    if (!currentQuestion) return;
+
     setUserAnswers(prev => ({ ...prev, [currentIndex]: selectedAnswer }));
 
     const answer = {
@@ -507,26 +761,28 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   const handleSubmit = useCallback(async () => {
     setIsRunning(false);
 
+    const unanswered = questions.some((_, i) => !userAnswers[i]);
+    if (unanswered) {
+      setIsRunning(true);
+      alert('请完成所有题目再提交！');
+      return;
+    }
+
+    const allAnswers = questions.map((q, idx) => {
+      const selectedAnswer = userAnswers[idx];
+      const isCorrect = selectedAnswer === q.correctAnswer;
+      return {
+        question: q,
+        selectedAnswer,
+        isCorrect,
+        answerTime: answerMode === 'batch'
+          ? elapsedTime / questions.length * 1000
+          : answers.find(answer => answer.question.id === q.id)?.answerTime || 0,
+        timestamp: Date.now(),
+      };
+    });
+
     if (answerMode === 'batch') {
-      const unanswered = questions.some((_, i) => !userAnswers[i]);
-      if (unanswered) {
-        setIsRunning(true);
-        alert('请完成所有题目再提交！');
-        return;
-      }
-
-      const allAnswers = questions.map((q, idx) => {
-        const selectedAnswer = userAnswers[idx];
-        const isCorrect = selectedAnswer === q.correctAnswer;
-        return {
-          question: q,
-          selectedAnswer,
-          isCorrect,
-          answerTime: elapsedTime / questions.length * 1000,
-          timestamp: Date.now(),
-        };
-      });
-
       for (const answer of allAnswers) {
         if (answer.question.linkedAngleId) {
           await updateNodePSScore(answer.question.linkedAngleId, answer.isCorrect);
@@ -552,9 +808,9 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
     } else {
       setIsComplete(true);
       onComplete({
-        correct: answers.filter(a => a.isCorrect).length,
-        wrong: answers.filter(a => !a.isCorrect).length,
-        details: answers,
+        correct: allAnswers.filter(a => a.isCorrect).length,
+        wrong: allAnswers.filter(a => !a.isCorrect).length,
+        details: allAnswers,
       });
     }
   }, [answerMode, questions, userAnswers, elapsedTime, updateNodePSScore, addAnswer, mode, answers, onComplete]);
@@ -588,6 +844,25 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
       setCurrentIndex(prev => prev - 1);
     }
   }, [currentIndex, currentUserAnswer]);
+
+  if (!questions || questions.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto p-4 sm:p-6">
+        <Card className="border-2 border-amber-500 bg-amber-50 dark:bg-amber-900/20">
+          <CardContent className="p-6 sm:p-8 text-center">
+            <AlertTriangle className="h-10 w-10 sm:h-12 sm:w-12 mx-auto mb-3 sm:mb-4 text-amber-500" />
+            <h3 className="text-base sm:text-lg font-semibold mb-2">暂无练习题目</h3>
+            <p className="text-sm text-muted-foreground">
+              题库为空或没有符合当前筛选条件的题目
+            </p>
+            <Button variant="outline" className="mt-3 sm:mt-4" onClick={onExit}>
+              返回练习选择
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (isComplete) {
     return <PracticeComplete results={answers} onExit={onExit} elapsedTime={elapsedTime} />;
@@ -640,7 +915,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   );
 }
 
-function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; onExit: () => void; elapsedTime: number }) {
+function PracticeComplete({ results, onExit, elapsedTime }: { results: PracticeAnswerResult[]; onExit: () => void; elapsedTime: number }) {
   const correctCount = results.filter(r => r.isCorrect).length;
   const totalCount = results.length;
   const accuracy = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
@@ -652,10 +927,6 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
     const secs = seconds % 60;
     return `${mins}分${secs}秒`;
   };
-
-  const filteredResults = filter === 'all' 
-    ? results 
-    : results.filter(r => !r.isCorrect);
 
   return (
     <motion.div
@@ -669,7 +940,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
           <p className="text-base sm:text-lg">正确率</p>
           <div className="flex justify-center gap-4 sm:gap-8">
             <div className="text-center">
-              <div className="text-xl sm:text-3xl font-bold text-green-500">{correctCount}</div>
+              <div className="text-xl font-bold text-[#a49aff] sm:text-3xl">{correctCount}</div>
               <div className="text-xs sm:text-sm text-muted-foreground">正确</div>
             </div>
             <div className="text-center">
@@ -702,6 +973,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                 variant={filter === 'wrong' ? 'default' : 'outline'}
                 size="sm"
                 className={filter === 'wrong' ? 'bg-red-500 hover:bg-red-600' : ''}
+                onClick={() => setFilter('wrong')}
               >
                 只看错题 ({totalCount - correctCount})
               </Button>
@@ -721,7 +993,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                     aspect-square rounded-lg flex items-center justify-center font-semibold text-xs sm:text-sm
                     transition-all hover:scale-105
                     ${isCorrect 
-                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 hover:bg-green-200' 
+                      ? 'bg-[#b7e3ff]/45 text-[#5e5394] hover:bg-[#b7e3ff]/65 dark:bg-violet-900/30 dark:text-violet-200' 
                       : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200'
                     }
                     ${selectedQuestion === idx ? 'ring-2 ring-primary scale-105' : ''}
@@ -735,7 +1007,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
 
           <div className="flex gap-4 sm:gap-6 text-xs sm:text-sm justify-center">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-green-500"></div>
+              <div className="h-3 w-3 rounded bg-[#a49aff]"></div>
               <span>正确</span>
             </div>
             <div className="flex items-center gap-2">
@@ -755,7 +1027,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                   第 {selectedQuestion + 1} 题
                   <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
                     results[selectedQuestion].isCorrect 
-                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
+                      ? 'bg-[#b7e3ff]/45 text-[#5e5394] dark:bg-violet-900/30 dark:text-violet-200' 
                       : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                   }`}>
                     {results[selectedQuestion].isCorrect ? '正确' : '错误'}
@@ -776,7 +1048,7 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                 
                 <div className="space-y-2">
                   <p className="text-sm font-medium">选项：</p>
-                  {results[selectedQuestion].question?.options.map((opt: any) => {
+                  {results[selectedQuestion].question?.options.map((opt) => {
                     const isCorrectOption = opt.label === results[selectedQuestion].question?.correctAnswer;
                     const isUserAnswer = opt.label === results[selectedQuestion].selectedAnswer;
                     
@@ -785,14 +1057,14 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                         key={opt.label}
                         className={`p-3 rounded-lg border ${
                           isCorrectOption 
-                            ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
+                            ? 'border-[#b7e3ff] bg-[#b7e3ff]/35 dark:bg-violet-900/20' 
                             : isUserAnswer && !results[selectedQuestion].isCorrect
                             ? 'border-red-500 bg-red-50 dark:bg-red-900/20 line-through'
                             : 'border-gray-200 dark:border-gray-700'
                         }`}
                       >
                         <span className="font-semibold text-sm">{opt.label}.</span> {opt.text}
-                        {isCorrectOption && <span className="ml-2 text-green-600 text-xs">✓ 正确答案</span>}
+                        {isCorrectOption && <span className="ml-2 text-xs text-[#6d63c9]">✓ 正确答案</span>}
                         {isUserAnswer && !isCorrectOption && <span className="ml-2 text-red-600 text-xs">✗ 你的答案</span>}
                       </div>
                     );
@@ -809,16 +1081,19 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: any[]; on
                   </div>
                 )}
 
-                {results[selectedQuestion].question?.images?.length > 0 && (
+                {(results[selectedQuestion]?.question?.images?.length || 0) > 0 && (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">解析图片：</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {results[selectedQuestion].question?.images.map((img: string, idx: number) => (
-                        <img 
+                      {results[selectedQuestion]?.question?.images?.map((img: string, idx: number) => (
+                        <Image
                           key={idx} 
                           src={img} 
                           alt={`解析图片 ${idx + 1}`} 
-                          className="rounded-lg border max-h-40 sm:max-h-48 object-contain" 
+                          width={640}
+                          height={320}
+                          unoptimized
+                          className="h-auto max-h-40 w-auto rounded-lg border object-contain sm:max-h-48"
                         />
                       ))}
                     </div>

@@ -73,10 +73,10 @@ interface GraphNodeData {
 }
 
 const SIZE_MAP: Record<string, number> = {
-  subject: 60,
-  knowledge: 50,
-  subknowledge: 40,
-  example: 35,
+  subject: 36,
+  knowledge: 32,
+  subknowledge: 28,
+  example: 26,
 };
 
 const GLASS_STYLE = 'bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-lg';
@@ -147,7 +147,7 @@ function WrongQuestionList({ angleId, angleName }: { angleId: string; angleName:
 
   return (
     <div className="space-y-2">
-      <h4 className="text-xs font-semibold text-red-600 mb-2 flex items-center gap-1">
+      <h4 className="text-xs font-semibold text-red-60 mb-2 flex items-center gap-1">
         <X className="h-3.5 w-3.5" />
         「{angleName}」错题列表
       </h4>
@@ -310,36 +310,34 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           data: graphData,
           animation: true,
           node: {
+            type: 'rect', // 强制矩形
             style: {
-              size: (d: any) => {
-                const type = d.data?.nodeType;
-                return SIZE_MAP[type] ?? 32;
+              width: (d: any) => {
+                const label = d.data?.label || '';
+                return Math.max(60, label.length * 10 + 24);
               },
+              height: (d: any) => SIZE_MAP[d.data?.nodeType] ?? 30,
               fill: (d: any) => d.data?.color || '#3b82f6',
               stroke: (d: any) => d.data?.borderColor || '#2563eb',
               lineWidth: 2,
-              radius: 8,
+              radius: 6,
+              
+              // 文字居中在矩形内部
               labelText: (d: any) => d.data?.label || '',
-              labelFill: (d: any) => d.data?.textColor || '#ffffff',
+              labelFill: (d: any) => d.data?.textColor || '#fff',
               labelFontSize: 11,
               labelFontWeight: 600,
-              labelMaxWidth: 100,
-              labelWordWrap: true,
+              labelTextAlign: 'center',
+              labelTextBaseline: 'middle',
+              labelY: 0,
               opacity: (d: any) => d.data?.opacity ?? 1,
               shadowColor: 'rgba(0,0,0,0.2)',
               shadowBlur: 8,
               shadowOffsetY: 2,
             },
             state: {
-              hover: {
-                lineWidth: 3,
-                shadowBlur: 12,
-              },
-              selected: {
-                lineWidth: 4,
-                shadowBlur: 16,
-                shadowColor: '#fbbf24',
-              },
+              hover: { lineWidth: 3, shadowBlur: 12 },
+              selected: { lineWidth: 4, shadowBlur: 16, shadowColor: '#fbbf24' },
             },
           },
           edge: {
@@ -351,7 +349,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
           layout: {
             type: 'dagre',
             rankdir: 'LR',
-            nodesep: 35,
+            nodesep: 40,
             ranksep: 70,
             animate: true,
             animationDuration: 500,
@@ -442,25 +440,19 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
         console.warn('Failed to destroy graph on cleanup:', e);
       }
     };
-  }, [isInitialized, nodes.length]);
+  }, [isInitialized, nodes.length, onNodeSelect]);
 
   useEffect(() => {
     if (graphRef.current && isReady) {
       try {
         if (structureChanged) {
           graphRef.current.setData(graphData);
-          graphRef.current.draw();
         } else {
           graphRef.current.updateNodeData(
-            (graphData.nodes || []).map(
-              n => ({
-                id: n.id,
-                data: n.data
-              })
-            )
+            graphData.nodes?.map(n => ({ id: n.id, data: n.data })) || []
           );
-          graphRef.current.draw();
         }
+        graphRef.current.draw();
       } catch (error) {
         console.error('Failed to update graph:', error);
       }
@@ -698,7 +690,7 @@ export function KnowledgeGraph({ onNodeSelect, onTargetedPractice, autoShowWrong
                       </Badge>
                     </PopoverTrigger>
                     <PopoverContent className="w-[320px] max-h-[300px] overflow-auto p-3" side="right" align="start">
-                      <WrongAnswerList nodeId={selectedNode.id} onClose={() => setShowWrongAnswerList(selectedNode.id)} />
+                      <WrongQuestionList angleId={selectedNode.id} angleName={selectedNode.name} />
                     </PopoverContent>
                   </Popover>
                 )}
@@ -841,4 +833,3 @@ function FlyingDotAnimation({ startX, startY, endX, endY, onComplete }: FlyingDo
     />
   );
 }
-

@@ -74,6 +74,7 @@ export interface QuestionBankItem {
   source?: string;
   type?: 'real' | 'simulated';
   reference?: string;
+  examPaper?: string;
   createdAt: string;
 }
 
@@ -85,6 +86,25 @@ export interface AnswerRecord {
   timestamp: number;
   linkedAngleId?: string;
   source?: string;
+}
+
+export type BehaviorEventType =
+  | 'highlight'
+  | 'circle'
+  | 'strike'
+  | 'answer_select'
+  | 'answer_change'
+  | 'note';
+
+export interface BehaviorEventRecord {
+  id?: string;
+  questionId: string;
+  userId: string;
+  eventType: BehaviorEventType;
+  target: string;
+  startTime: string;
+  endTime: string;
+  metadata: Record<string, unknown>;
 }
 
 export interface ExamResult {
@@ -135,3 +155,46 @@ export interface GraphNode {
 }
 
 export type PracticeMode = 'sequence' | 'random' | 'targeted' | 'exam';
+
+export interface MindMapRecord {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  root_node_id?: string;
+  settings?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MapNodeRecord {
+  id: string;
+  mind_map_id: string;
+  user_id?: string;
+  parent_id: string | null;
+  name: string;
+  content?: string;
+  markdown?: string;
+  node_type: string;
+  color_tag: string;
+  ps_score?: number;
+  last_practiced_at?: string | null;
+  pos_x: number;
+  pos_y: number;
+  width: number;
+  height: number;
+  expanded: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MapEdgeRecord {
+  id: string;
+  mind_map_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: string;
+  created_at: string;
+}
+
+export type MindTabType = 'mindmap' | 'mindcanvas' | 'mindeditor';

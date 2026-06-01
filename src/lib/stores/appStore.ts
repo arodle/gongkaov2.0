@@ -5,9 +5,9 @@ import type {
   PSHistoryRecord,
   QuestionBankItem,
   AnswerRecord,
+  BehaviorEventRecord,
   ExamResult,
   ExamPaper,
-  Question,
 } from '@/types';
 import {
   db,
@@ -18,18 +18,18 @@ import {
   addPSHistory,
   createSnapshot,
   getPSHistory,
-  getBackupConfig,
-  updateBackupConfig,
 } from '@/lib/db/database';
 import { calculatePS, SCENARIO_COEFFICIENTS } from '@/lib/services/psCalculator';
 import { v4 as uuidv4 } from 'uuid';
 
 interface AppState {
+  currentUserId: string;
   nodes: KnowledgeNodeRecord[];
   practiceRecords: PracticeRecord[];
   psHistory: PSHistoryRecord[];
   questionBank: QuestionBankItem[];
   answerRecords: AnswerRecord[];
+  behaviorEvents: BehaviorEventRecord[];
   examResults: ExamResult[];
   examPapers: ExamPaper[];
   isInitialized: boolean;
@@ -37,8 +37,11 @@ interface AppState {
   syncStatus: 'idle' | 'syncing' | 'success' | 'error';
 
   initialize: () => Promise<void>;
+  loadBehaviorEventsForQuestion: (questionId: string) => Promise<void>;
+  flushBehaviorEvents: () => Promise<void>;
   updateNodePSScore: (nodeId: string, isCorrect: boolean, scenario?: number) => Promise<void>;
   addAnswer: (record: AnswerRecord) => void;
+  recordBehaviorEvent: (event: Omit<BehaviorEventRecord, 'id' | 'userId'> & { userId?: string }) => void;
   setOnlineStatus: (isOnline: boolean) => void;
   setSyncStatus: (status: 'idle' | 'syncing' | 'success' | 'error') => void;
   createSafetySnapshot: (reason: string) => Promise<string>;
@@ -59,11 +62,13 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  currentUserId: CURRENT_USER_ID,
   nodes: [],
   practiceRecords: [],
   psHistory: [],
   questionBank: [],
   answerRecords: [],
+  behaviorEvents: [],
   examResults: [],
   examPapers: [],
   isInitialized: false,
@@ -72,12 +77,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   initialize: async () => {
     try {
-      await fetch('/api/init');
+      await ensureServerTablesInitialized();
+      const currentUserId = await getClientUserId();
+      await ensureLocalUserBoundary(currentUserId);
 
-      let nodes = await getNodesByUser();
+      let nodes = await getNodesByUser(currentUserId);
       let questionBankItems: QuestionBankItem[] = [];
 
-      const neonResult = await fetchFromNeon();
+      const neonResult = await fetchFromNeon(currentUserId);
 
       if (neonResult.nodes.length > 0) {
         if (nodes.length > 0) {
@@ -87,7 +94,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             || nodes.some(n => !neonIds.has(n.id));
 
           if (hasDifferentData) {
-            await db.knowledge_nodes.clear();
+            await db.knowledge_nodes.where('user_id').equals(currentUserId).delete();
             await db.knowledge_nodes.bulkAdd(neonResult.nodes);
             nodes = neonResult.nodes;
           }
@@ -96,8 +103,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         questionBankItems = neonResult.questionBank;
       } else if (nodes.length === 0) {
-        const result = await seedInitialData();
-        nodes = await getNodesByUser();
+        const result = await seedInitialData(currentUserId);
+        nodes = await getNodesByUser(currentUserId);
         questionBankItems = result.questionBank;
       } else {
         const { SAMPLE_QUESTION_BANK } = await import('@/lib/sample-data');
@@ -107,16 +114,21 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
       }
 
-      const records = await db.practice_records.where('user_id').equals(CURRENT_USER_ID).toArray();
-      const history = await db.ps_history.where('user_id').equals(CURRENT_USER_ID).toArray();
+      const records = await db.practice_records.where('user_id').equals(currentUserId).toArray();
+      const history = await db.ps_history.where('user_id').equals(currentUserId).toArray();
+      const behaviorEvents = await db.behavior_events.where('userId').equals(currentUserId).toArray();
+      questionBankItems = normalizeQuestionLinks(questionBankItems, nodes);
 
       set({
+        currentUserId,
         nodes,
         questionBank: questionBankItems,
         practiceRecords: records,
         psHistory: history,
+        behaviorEvents,
         isInitialized: true,
       });
+      await get().flushBehaviorEvents();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('Failed to initialize app state:', msg, error);
@@ -137,14 +149,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       lastPracticedAt: lastPracticed,
     });
 
-    await updateNodePS(nodeId, newPS);
+    await updateNodePS(nodeId, newPS, state.currentUserId);
+    void syncNodeToNeon({
+      id: nodeId,
+      user_id: state.currentUserId,
+      name: node.name,
+      ps_score: newPS,
+    });
 
     const historyRecord: PSHistoryRecord = {
       id: uuidv4(),
       node_id: nodeId,
       ps_score: newPS,
       recorded_at: new Date().toISOString(),
-      user_id: CURRENT_USER_ID,
+      user_id: state.currentUserId,
     };
     await addPSHistory(historyRecord);
 
@@ -159,9 +177,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addAnswer: (record: AnswerRecord) => {
+    const currentUserId = get().currentUserId;
     const dbRecord: PracticeRecord = {
       id: uuidv4(),
-      user_id: CURRENT_USER_ID,
+      user_id: currentUserId,
       question_id: record.questionId,
       is_correct: record.isCorrect,
       answer_time: Date.now() - record.timestamp,
@@ -170,6 +189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
 
     addPracticeRecord(dbRecord).catch(console.error);
+    void syncAnswerToNeon(record);
 
     set(state => ({
       answerRecords: [...state.answerRecords, record],
@@ -177,7 +197,94 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  setOnlineStatus: (isOnline: boolean) => set({ isOnline }),
+  loadBehaviorEventsForQuestion: async (questionId: string) => {
+    const currentUserId = get().currentUserId;
+
+    try {
+      const response = await fetch(`/api/behavior-events?questionId=${encodeURIComponent(questionId)}`);
+      if (response.ok) {
+        const json = await response.json();
+        const remoteEvents = Array.isArray(json.events) ? json.events as BehaviorEventRecord[] : [];
+        if (remoteEvents.length > 0) {
+          await db.behavior_events.bulkPut(remoteEvents.map(event => ({
+            ...event,
+            userId: currentUserId,
+            sync_status: 'synced' as const,
+            created_at: event.startTime,
+          })));
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load behavior events for question:', err);
+    }
+
+    const events = await db.behavior_events
+      .where('questionId')
+      .equals(questionId)
+      .filter(event => event.userId === currentUserId)
+      .toArray();
+
+    set(state => {
+      const otherEvents = state.behaviorEvents.filter(event => event.questionId !== questionId);
+      return {
+        behaviorEvents: [...otherEvents, ...events].sort((a, b) => a.startTime.localeCompare(b.startTime)),
+      };
+    });
+  },
+
+  flushBehaviorEvents: async () => {
+    const currentUserId = get().currentUserId;
+    const pendingEvents = await db.behavior_events
+      .where('sync_status')
+      .equals('pending')
+      .filter(event => event.userId === currentUserId)
+      .toArray();
+
+    if (pendingEvents.length === 0) return;
+    const synced = await syncBehaviorEventsToNeon(pendingEvents);
+    if (!synced) return;
+
+    await db.behavior_events.bulkPut(pendingEvents.map(event => ({
+      ...event,
+      sync_status: 'synced' as const,
+    })));
+    set(state => ({
+      behaviorEvents: state.behaviorEvents.map(event => (
+        pendingEvents.some(pending => pending.id === event.id)
+          ? { ...event, sync_status: 'synced' as const }
+          : event
+      )),
+    }));
+  },
+
+  recordBehaviorEvent: (event) => {
+    const currentUserId = get().currentUserId;
+    const behaviorEvent: BehaviorEventRecord = {
+      id: uuidv4(),
+      userId: event.userId || currentUserId,
+      questionId: event.questionId,
+      eventType: event.eventType,
+      target: event.target,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      metadata: event.metadata || {},
+    };
+
+    void db.behavior_events.put({
+      ...behaviorEvent,
+      sync_status: 'pending',
+      created_at: new Date().toISOString(),
+    }).then(() => get().flushBehaviorEvents());
+
+    set(state => ({
+      behaviorEvents: [...state.behaviorEvents, behaviorEvent],
+    }));
+  },
+
+  setOnlineStatus: (isOnline: boolean) => {
+    set({ isOnline });
+    if (isOnline) void get().flushBehaviorEvents();
+  },
 
   setSyncStatus: (syncStatus: 'idle' | 'syncing' | 'success' | 'error') => set({ syncStatus }),
 
@@ -258,9 +365,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addNode: (node) => {
+    const currentUserId = get().currentUserId;
     const newNode: KnowledgeNodeRecord = {
       ...node,
-      user_id: CURRENT_USER_ID,
+      user_id: currentUserId,
       ps_score: 50,
       last_practiced_at: null,
       color_tag: 'default',
@@ -325,9 +433,138 @@ interface NeonSyncQuestion {
   source?: string;
   type?: string;
   reference?: string;
+  exam_paper?: string;
 }
 
-async function fetchFromNeon() {
+interface SampleMindMapNode {
+  id: string;
+  name: string;
+  type: KnowledgeNodeRecord['node_type'];
+  content?: string;
+  annotation?: string;
+  children?: SampleMindMapNode[];
+}
+
+function normalizeQuestionNodeId(id?: string | null) {
+  if (!id) return '';
+  return id.startsWith('mn_') ? id.slice(3) : id;
+}
+
+function normalizeQuestionLinks(questions: QuestionBankItem[], nodes: KnowledgeNodeRecord[]) {
+  if (questions.length === 0 || nodes.length === 0) return questions;
+
+  const byId = new Map<string, KnowledgeNodeRecord>();
+  const byName = new Map<string, KnowledgeNodeRecord>();
+  const byPath = new Map<string, KnowledgeNodeRecord>();
+  const pathById = new Map<string, string>();
+
+  nodes.forEach(node => {
+    byId.set(node.id, node);
+    byId.set(normalizeQuestionNodeId(node.id), node);
+    byId.set(`mn_${normalizeQuestionNodeId(node.id)}`, node);
+    if (!byName.has(node.name)) byName.set(node.name, node);
+  });
+
+  const getPath = (nodeId: string) => {
+    const parts: string[] = [];
+    let current = byId.get(nodeId) || byId.get(normalizeQuestionNodeId(nodeId));
+    const visited = new Set<string>();
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      parts.unshift(current.name);
+      current = current.parent_id
+        ? byId.get(current.parent_id) || byId.get(normalizeQuestionNodeId(current.parent_id))
+        : undefined;
+    }
+
+    return parts.join('》');
+  };
+
+  nodes.forEach(node => {
+    const path = getPath(node.id);
+    pathById.set(node.id, path);
+    pathById.set(normalizeQuestionNodeId(node.id), path);
+    if (path) byPath.set(path, node);
+  });
+
+  return questions.map(question => {
+    const normalizedId = normalizeQuestionNodeId(question.linkedAngleId);
+    const path = question.knowledgePath?.trim();
+    const lastPathName = path?.split(/[》>\/]/).map(part => part.trim()).filter(Boolean).at(-1);
+    const linkedNode = (normalizedId && (byId.get(normalizedId) || byId.get(`mn_${normalizedId}`)))
+      || (path && byPath.get(path))
+      || (lastPathName && byName.get(lastPathName))
+      || (question.linkedAngleName && byName.get(question.linkedAngleName));
+
+    if (!linkedNode) {
+      return {
+        ...question,
+        linkedAngleId: normalizedId,
+      };
+    }
+
+    return {
+      ...question,
+      linkedAngleId: normalizeQuestionNodeId(linkedNode.id),
+      linkedAngleName: linkedNode.name,
+      knowledgePath: pathById.get(linkedNode.id) || question.knowledgePath || linkedNode.name,
+    };
+  });
+}
+
+async function getClientUserId() {
+  try {
+    const response = await fetch('/api/auth/me');
+    if (!response.ok) return CURRENT_USER_ID;
+    const json = await response.json();
+    return typeof json.user?.id === 'string' ? json.user.id : CURRENT_USER_ID;
+  } catch {
+    return CURRENT_USER_ID;
+  }
+}
+
+async function ensureServerTablesInitialized() {
+  const initVersion = '2026-05-28-exam-paper';
+  const storageKey = 'gongkao.serverInitVersion';
+
+  if (typeof window !== 'undefined' && window.localStorage.getItem(storageKey) === initVersion) {
+    return;
+  }
+
+  const response = await fetch('/api/init');
+  if (!response.ok) return;
+
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(storageKey, initVersion);
+  }
+}
+
+async function ensureLocalUserBoundary(userId: string) {
+  if (typeof window === 'undefined') return;
+
+  const storageKey = 'gongkao.currentUserId';
+  const lastUserId = window.localStorage.getItem(storageKey);
+  if (!lastUserId || lastUserId === userId) {
+    window.localStorage.setItem(storageKey, userId);
+    return;
+  }
+
+  await db.transaction('rw', [
+    db.knowledge_nodes,
+    db.practice_records,
+    db.ps_history,
+    db.behavior_events,
+  ], async () => {
+    await db.knowledge_nodes.clear();
+    await db.practice_records.clear();
+    await db.ps_history.clear();
+    await db.behavior_events.clear();
+  });
+  window.localStorage.setItem(storageKey, userId);
+}
+
+async function fetchFromNeon(currentUserId = CURRENT_USER_ID) {
   try {
     const response = await fetch('/api/sync');
     if (!response.ok) return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
@@ -340,7 +577,7 @@ async function fetchFromNeon() {
 
     const nodes: KnowledgeNodeRecord[] = knowledgeNodes.map(n => ({
       id: n.id,
-      user_id: n.user_id || CURRENT_USER_ID,
+      user_id: n.user_id || currentUserId,
       name: n.name,
       parent_id: n.parent_id,
       pos_x: n.pos_x,
@@ -366,12 +603,13 @@ async function fetchFromNeon() {
       correctAnswer: q.correct_answer,
       explanation: q.explanation || '',
       images: [],
-      linkedAngleId: q.linked_angle_id || '',
+      linkedAngleId: normalizeQuestionNodeId(q.linked_angle_id),
       linkedAngleName: '',
       knowledgePath: q.knowledge_path,
       source: q.source,
       type: (q.type as 'real' | 'simulated') || (q.source as 'real' | 'simulated'),
       reference: q.reference,
+      examPaper: q.exam_paper,
       createdAt: new Date().toISOString(),
     }));
 
@@ -384,7 +622,7 @@ async function fetchFromNeon() {
 export async function syncNodeToNeon(node: {
   id: string;
   user_id: string;
-  name: string;
+  name?: string;
   parent_id?: string | null;
   pos_x?: number;
   pos_y?: number;
@@ -396,7 +634,7 @@ export async function syncNodeToNeon(node: {
   try {
     const response = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': node.user_id },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         knowledgeNode: {
           id: node.id,
@@ -419,11 +657,11 @@ export async function syncNodeToNeon(node: {
   }
 }
 
-export async function syncNodeDeleteToNeon(userId: string, nodeIds: string[]) {
+export async function syncNodeDeleteToNeon(_userId: string, nodeIds: string[]) {
   try {
     const response = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deleteNodeIds: nodeIds }),
     });
     const json = await response.json();
@@ -434,19 +672,57 @@ export async function syncNodeDeleteToNeon(userId: string, nodeIds: string[]) {
   }
 }
 
-async function seedInitialData() {
+async function syncAnswerToNeon(record: AnswerRecord) {
+  try {
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        answers: [{
+          question_id: record.questionId,
+          selected_answer: record.selectedAnswer,
+          is_correct: record.isCorrect,
+          practice_mode: record.source || 'practice',
+          practice_set_id: record.practiceSetId,
+        }],
+      }),
+    });
+    const json = await response.json();
+    return json.success;
+  } catch (err) {
+    console.error('Failed to sync answer to Neon:', err);
+    return false;
+  }
+}
+
+async function syncBehaviorEventsToNeon(events: BehaviorEventRecord[]) {
+  try {
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ behaviorEvents: events }),
+    });
+    const json = await response.json();
+    return json.success;
+  } catch (err) {
+    console.error('Failed to sync behavior events to Neon:', err);
+    return false;
+  }
+}
+
+async function seedInitialData(userId = CURRENT_USER_ID) {
   const { SAMPLE_MIND_MAP } = await import('@/lib/sample-data');
   const { SAMPLE_QUESTION_BANK } = await import('@/lib/sample-data');
 
   const nodesToAdd: KnowledgeNodeRecord[] = [];
 
-  function traverseTree(node: any, parentId: string | null = null, depth = 0) {
+  function traverseTree(node: SampleMindMapNode, parentId: string | null = null, depth = 0) {
     const x = depth * 200;
     const y = 0;
 
     nodesToAdd.push({
       id: node.id,
-      user_id: CURRENT_USER_ID,
+      user_id: userId,
       name: node.name,
       parent_id: parentId,
       pos_x: x,
@@ -461,15 +737,13 @@ async function seedInitialData() {
     });
 
     if (node.children) {
-      let childIndex = 0;
-      node.children.forEach((child: any) => {
+      node.children.forEach((child) => {
         traverseTree(child, node.id, depth + 1);
-        childIndex++;
       });
     }
   }
 
-  traverseTree(SAMPLE_MIND_MAP);
+  traverseTree(SAMPLE_MIND_MAP as SampleMindMapNode);
 
   await db.knowledge_nodes.bulkAdd(nodesToAdd);
 

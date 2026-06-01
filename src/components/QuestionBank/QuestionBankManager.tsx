@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { QuestionBankItem } from '@/types';
@@ -8,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
@@ -26,16 +27,16 @@ import {
   Trash2,
   FileText,
   BookOpen,
-  FileQuestion,
-  FolderOpen,
   X,
   Check,
-  AlertTriangle,
-  Copy,
   Layers,
   Image as ImageIcon,
   Lightbulb,
   ZoomIn,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -50,6 +51,7 @@ interface QuestionFormData {
   knowledgePath: string;
   type: 'real' | 'simulated';
   reference: string;
+  examPaper: string;
 }
 
 const initialFormData: QuestionFormData = {
@@ -68,6 +70,7 @@ const initialFormData: QuestionFormData = {
   knowledgePath: '',
   type: 'real',
   reference: '',
+  examPaper: '',
 };
 
 interface ExamPaperFormData {
@@ -77,15 +80,35 @@ interface ExamPaperFormData {
   questions: string[];
 }
 
-interface ExamPaper {
-  id: string;
-  name: string;
-  description: string;
-  type: 'real' | 'simulated';
-  questions: string[];
-  createdAt: string;
-  completedCount: number;
-  avgScore: number;
+interface UploadedPaperQuestion {
+  id?: string;
+  content: string;
+  options?: { label: string; text: string }[];
+  correctAnswer?: string;
+  explanation?: string;
+  images?: string[];
+  linkedAngleId?: string;
+  linkedAngleName?: string;
+  knowledgePath?: string;
+  reference?: string;
+}
+
+interface UploadedPaperData {
+  name?: string;
+  description?: string;
+  type?: 'real' | 'simulated';
+  questions?: UploadedPaperQuestion[];
+}
+
+interface QuestionLinkLike {
+  linkedAngleId?: string;
+  linkedAngleName?: string;
+  knowledgePath?: string;
+}
+
+function normalizeNodeId(id?: string | null) {
+  if (!id) return '';
+  return id.startsWith('mn_') ? id.slice(3) : id;
 }
 
 export function QuestionBankManager() {
@@ -103,12 +126,94 @@ export function QuestionBankManager() {
     questions: [],
   });
   const [selectedQuestions, setSelectedQuestions] = useState<Set<string>>(new Set());
+  const [batchExamPaper, setBatchExamPaper] = useState('');
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const [paperCreationMode, setPaperCreationMode] = useState<'select' | 'upload'>('select');
-  const [uploadedPaper, setUploadedPaper] = useState<any>(null);
+  const [uploadedPaper, setUploadedPaper] = useState<UploadedPaperData | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const paperInputRef = useRef<HTMLInputElement>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const nodeLookup = useMemo(() => {
+    const byId = new Map<string, typeof nodes[number]>();
+    const pathById = new Map<string, string>();
+    const byName = new Map<string, typeof nodes[number]>();
+    const byPath = new Map<string, typeof nodes[number]>();
+
+    nodes.forEach(node => {
+      byId.set(node.id, node);
+      byId.set(normalizeNodeId(node.id), node);
+      byId.set(`mn_${normalizeNodeId(node.id)}`, node);
+      if (!byName.has(node.name)) byName.set(node.name, node);
+    });
+
+    const getNodePath = (nodeId: string): string[] => {
+      const parts: string[] = [];
+      let current = byId.get(nodeId) || byId.get(normalizeNodeId(nodeId));
+      const visited = new Set<string>();
+
+      while (current && !visited.has(current.id)) {
+        visited.add(current.id);
+        parts.unshift(current.name);
+        current = current.parent_id
+          ? byId.get(current.parent_id) || byId.get(normalizeNodeId(current.parent_id))
+          : undefined;
+      }
+
+      return parts;
+    };
+
+    nodes.forEach(node => {
+      const path = getNodePath(node.id).join('》');
+      pathById.set(node.id, path);
+      pathById.set(normalizeNodeId(node.id), path);
+      if (path) byPath.set(path, node);
+    });
+
+    return { byId, byName, byPath, pathById, getNodePath };
+  }, [nodes]);
+
+  const resolveLinkedNode = useCallback((question: QuestionLinkLike) => {
+    const normalizedId = normalizeNodeId(question.linkedAngleId);
+    if (normalizedId) {
+      const node = nodeLookup.byId.get(normalizedId) || nodeLookup.byId.get(`mn_${normalizedId}`);
+      if (node) return node;
+    }
+
+    const path = question.knowledgePath?.trim();
+    if (path) {
+      const node = nodeLookup.byPath.get(path);
+      if (node) return node;
+
+      const lastName = path.split(/[》>\/]/).map(part => part.trim()).filter(Boolean).at(-1);
+      if (lastName) {
+        const byName = nodeLookup.byName.get(lastName);
+        if (byName) return byName;
+      }
+    }
+
+    const linkedName = question.linkedAngleName?.trim();
+    return linkedName ? nodeLookup.byName.get(linkedName) : undefined;
+  }, [nodeLookup]);
+
+  const normalizeQuestionLink = useCallback(<T extends QuestionLinkLike>(question: T): T => {
+    const linkedNode = resolveLinkedNode(question);
+    if (!linkedNode) {
+      return {
+        ...question,
+        linkedAngleId: normalizeNodeId(question.linkedAngleId),
+      };
+    }
+
+    return {
+      ...question,
+      linkedAngleId: normalizeNodeId(linkedNode.id),
+      linkedAngleName: linkedNode.name,
+      knowledgePath: nodeLookup.pathById.get(linkedNode.id) || question.knowledgePath || linkedNode.name,
+    };
+  }, [nodeLookup.pathById, resolveLinkedNode]);
 
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -153,6 +258,31 @@ export function QuestionBankManager() {
     return result;
   }, [questionBank, searchQuery, filterType]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredQuestions.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
+  const pageQuestions = useMemo(() => {
+    return filteredQuestions.slice(pageStartIndex, pageStartIndex + pageSize);
+  }, [filteredQuestions, pageSize, pageStartIndex]);
+  const pageQuestionIds = useMemo(() => pageQuestions.map(question => question.id), [pageQuestions]);
+  const filteredQuestionIds = useMemo(() => filteredQuestions.map(question => question.id), [filteredQuestions]);
+  const pageSelectedCount = pageQuestionIds.filter(id => selectedQuestions.has(id)).length;
+  const filteredSelectedCount = filteredQuestionIds.filter(id => selectedQuestions.has(id)).length;
+  const allPageSelected = pageQuestionIds.length > 0 && pageSelectedCount === pageQuestionIds.length;
+  const allFilteredSelected = filteredQuestionIds.length > 0 && filteredSelectedCount === filteredQuestionIds.length;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterType, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const examPaperOptions = useMemo(() => {
+    return Array.from(new Set(questionBank.map(q => q.examPaper).filter(Boolean) as string[])).sort();
+  }, [questionBank]);
+
   const realQuestions = useMemo(() => {
     return questionBank.filter(q => q.type === 'real');
   }, [questionBank]);
@@ -163,30 +293,32 @@ export function QuestionBankManager() {
 
   const handleOpenQuestionDialog = useCallback((question?: QuestionBankItem) => {
     if (question) {
+      const normalizedQuestion = normalizeQuestionLink(question);
       setEditingQuestion(question);
       setFormData({
-        content: question.content,
-        options: [...question.options],
-        correctAnswer: question.correctAnswer,
-        explanation: question.explanation,
-        images: question.images || [],
-        linkedAngleId: question.linkedAngleId || '',
-        linkedAngleName: question.linkedAngleName || '',
-        knowledgePath: question.knowledgePath || '',
-        type: question.type || 'real',
-        reference: question.reference || '',
+        content: normalizedQuestion.content,
+        options: [...normalizedQuestion.options],
+        correctAnswer: normalizedQuestion.correctAnswer,
+        explanation: normalizedQuestion.explanation,
+        images: normalizedQuestion.images || [],
+        linkedAngleId: normalizedQuestion.linkedAngleId || '',
+        linkedAngleName: normalizedQuestion.linkedAngleName || '',
+        knowledgePath: normalizedQuestion.knowledgePath || '',
+        type: normalizedQuestion.type || 'real',
+        reference: normalizedQuestion.reference || '',
+        examPaper: normalizedQuestion.examPaper || '',
       });
     } else {
       setEditingQuestion(null);
       setFormData(initialFormData);
     }
     setShowQuestionDialog(true);
-  }, []);
+  }, [normalizeQuestionLink]);
 
   const handleSaveQuestion = useCallback(async () => {
     if (!formData.content || !formData.correctAnswer) return;
 
-    const questionData: QuestionBankItem = {
+    const questionData: QuestionBankItem = normalizeQuestionLink({
       id: editingQuestion?.id || `q_${Date.now()}`,
       content: formData.content,
       options: formData.options.filter(o => o.text),
@@ -199,8 +331,9 @@ export function QuestionBankManager() {
       type: formData.type,
       source: formData.type,
       reference: formData.reference,
+      examPaper: formData.examPaper.trim(),
       createdAt: editingQuestion?.createdAt || new Date().toISOString(),
-    };
+    });
 
     if (editingQuestion) {
       updateQuestion(questionData);
@@ -226,6 +359,7 @@ export function QuestionBankManager() {
           source: questionData.type,
           type: questionData.type,
           reference: questionData.reference,
+          exam_paper: questionData.examPaper,
         }],
       }),
     }).catch(err => console.error('Failed to sync question to Neon:', err));
@@ -233,13 +367,62 @@ export function QuestionBankManager() {
     setShowQuestionDialog(false);
     setFormData(initialFormData);
     setEditingQuestion(null);
-  }, [formData, editingQuestion, addQuestion, updateQuestion]);
+  }, [formData, editingQuestion, addQuestion, normalizeQuestionLink, updateQuestion]);
 
   const handleDeleteQuestion = useCallback((id: string) => {
     if (confirm('确定要删除这道题目吗？')) {
       deleteQuestion(id);
     }
   }, [deleteQuestion]);
+
+  const syncQuestionsToNeon = useCallback((questions: QuestionBankItem[]) => {
+    if (questions.length === 0) return;
+
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        questions: questions.map(question => {
+          const normalizedQuestion = normalizeQuestionLink(question);
+          return {
+            id: normalizedQuestion.id,
+            question_text: normalizedQuestion.content,
+            option_a: normalizedQuestion.options[0]?.text || '',
+            option_b: normalizedQuestion.options[1]?.text || '',
+            option_c: normalizedQuestion.options[2]?.text || '',
+            option_d: normalizedQuestion.options[3]?.text || '',
+            correct_answer: normalizedQuestion.correctAnswer,
+            explanation: normalizedQuestion.explanation,
+            knowledge_path: normalizedQuestion.knowledgePath,
+            linked_angle_id: normalizedQuestion.linkedAngleId,
+            source: normalizedQuestion.type,
+            type: normalizedQuestion.type,
+            reference: normalizedQuestion.reference,
+            exam_paper: normalizedQuestion.examPaper,
+          };
+        }),
+      }),
+    }).catch(err => console.error('Failed to sync questions to Neon:', err));
+  }, [normalizeQuestionLink]);
+
+  const handleBatchApplyExamPaper = useCallback(() => {
+    const examPaper = batchExamPaper.trim();
+    if (!examPaper || selectedQuestions.size === 0) return;
+
+    const updatedQuestions = questionBank
+      .filter(question => selectedQuestions.has(question.id))
+      .map(question => normalizeQuestionLink({
+        ...question,
+        type: 'real' as const,
+        source: 'real',
+        examPaper,
+      }));
+
+    updatedQuestions.forEach(updateQuestion);
+    syncQuestionsToNeon(updatedQuestions);
+    setBatchExamPaper('');
+    setSelectedQuestions(new Set());
+  }, [batchExamPaper, normalizeQuestionLink, questionBank, selectedQuestions, syncQuestionsToNeon, updateQuestion]);
 
   const handleImportJSON = useCallback(() => {
     fileInputRef.current?.click();
@@ -256,21 +439,21 @@ export function QuestionBankManager() {
         if (Array.isArray(data)) {
           data.forEach((item: QuestionBankItem) => {
             if (item.content && item.options && item.correctAnswer) {
-              addQuestion({
+              addQuestion(normalizeQuestionLink({
                 ...item,
                 id: item.id || `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              });
+              }));
             }
           });
           alert(`成功导入 ${data.length} 道题目`);
         }
-      } catch (error) {
+      } catch {
         alert('导入失败，请检查文件格式');
       }
     };
     reader.readAsText(file);
     e.target.value = '';
-  }, [addQuestion]);
+  }, [addQuestion, normalizeQuestionLink]);
 
   const handleExportQuestions = useCallback(() => {
     const dataStr = JSON.stringify(filteredQuestions, null, 2);
@@ -295,6 +478,29 @@ export function QuestionBankManager() {
     });
   }, []);
 
+  const handleToggleCurrentPageSelection = useCallback(() => {
+    setSelectedQuestions(prev => {
+      const next = new Set(prev);
+      const shouldSelect = pageQuestionIds.some(id => !next.has(id));
+      pageQuestionIds.forEach(id => {
+        if (shouldSelect) next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+  }, [pageQuestionIds]);
+
+  const handleSelectFilteredQuestions = useCallback(() => {
+    setSelectedQuestions(prev => {
+      const next = new Set(prev);
+      filteredQuestionIds.forEach(id => {
+        if (allFilteredSelected) next.delete(id);
+        else next.add(id);
+      });
+      return next;
+    });
+  }, [allFilteredSelected, filteredQuestionIds]);
+
   const handlePaperUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -303,25 +509,24 @@ export function QuestionBankManager() {
     reader.onload = (event) => {
       try {
         const content = event.target?.result as string;
-        let data;
+        let data: UploadedPaperData | undefined;
         
         if (file.name.endsWith('.json')) {
           data = JSON.parse(content);
         } else if (file.name.endsWith('.csv')) {
           // 简单的 CSV 解析
           const lines = content.split('\n').filter(line => line.trim());
-          const headers = lines[0].split(',').map(h => h.trim());
           data = {
             name: '上传的套卷',
             type: 'real',
             description: '通过文件上传的套卷',
-            questions: [] as any[]
+            questions: []
           };
           
           for (let i = 1; i < lines.length; i++) {
             const values = lines[i].split(',');
             if (values.length >= 5) {
-              data.questions.push({
+              (data.questions ||= []).push({
                 id: `upload_q_${Date.now()}_${i}`,
                 content: values[0].trim(),
                 options: [
@@ -338,6 +543,7 @@ export function QuestionBankManager() {
           }
         }
         
+        if (!data) return;
         setUploadedPaper(data);
         
         // 自动填充表单
@@ -361,6 +567,7 @@ export function QuestionBankManager() {
     if (!paperFormData.name) return;
     
     let questionIds: string[] = [];
+    const uploadedQuestions: QuestionBankItem[] = [];
     
     if (paperCreationMode === 'select') {
       if (selectedQuestions.size === 0) return;
@@ -374,8 +581,8 @@ export function QuestionBankManager() {
       
       questionIds = [];
       
-      uploadedPaper.questions.forEach((q: any) => {
-        const newQuestion: QuestionBankItem = {
+      uploadedPaper.questions.forEach((q) => {
+        const newQuestion: QuestionBankItem = normalizeQuestionLink({
           id: q.id || `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           content: q.content,
           options: q.options || [
@@ -392,14 +599,31 @@ export function QuestionBankManager() {
           knowledgePath: q.knowledgePath || '',
           type: paperFormData.type,
           reference: q.reference || '',
+          examPaper: paperFormData.name.trim(),
           source: 'upload',
           createdAt: new Date().toISOString(),
-        };
+        });
         
         addQuestion(newQuestion);
+        uploadedQuestions.push(newQuestion);
         questionIds.push(newQuestion.id);
       });
     }
+
+    const selectedModeQuestions = paperCreationMode === 'select'
+      ? questionBank
+          .filter(question => questionIds.includes(question.id))
+          .map(question => normalizeQuestionLink({
+            ...question,
+            type: paperFormData.type,
+            source: paperFormData.type,
+            examPaper: paperFormData.name.trim(),
+          }))
+      : [];
+
+    selectedModeQuestions.forEach(updateQuestion);
+    if (selectedModeQuestions.length > 0) syncQuestionsToNeon(selectedModeQuestions);
+    if (uploadedQuestions.length > 0) syncQuestionsToNeon(uploadedQuestions);
 
     addExamPaper({
       id: `paper_${Date.now()}`,
@@ -423,12 +647,15 @@ export function QuestionBankManager() {
     setUploadedPaper(null);
     setPaperCreationMode('select');
     alert('套卷创建成功！');
-  }, [paperFormData, selectedQuestions, paperCreationMode, uploadedPaper, addExamPaper, addQuestion]);
+  }, [paperFormData, selectedQuestions, paperCreationMode, uploadedPaper, addExamPaper, addQuestion, normalizeQuestionLink, questionBank, syncQuestionsToNeon, updateQuestion]);
 
-  const getLinkedNodeName = useCallback((nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
-    return node?.name || '未分类';
-  }, [nodes]);
+  const getQuestionKnowledgeLabel = useCallback((question: QuestionLinkLike) => {
+    const linkedNode = resolveLinkedNode(question);
+    if (linkedNode) {
+      return nodeLookup.pathById.get(linkedNode.id) || linkedNode.name;
+    }
+    return question.knowledgePath || question.linkedAngleName || '未绑定知识点';
+  }, [nodeLookup.pathById, resolveLinkedNode]);
 
   const stats = useMemo(() => ({
     total: questionBank.length,
@@ -438,68 +665,95 @@ export function QuestionBankManager() {
 
   return (
     <div className="h-full flex flex-col w-full overflow-x-hidden">
-      <div className="p-3 sm:p-4 border-b space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-semibold flex items-center gap-2 text-sm sm:text-base">
+      <div className="border-b bg-white p-3 sm:p-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <BookOpen className="h-4 sm:h-5 w-4 sm:w-5" />
               题库管理
             </h2>
-            <Badge variant="outline" className="text-xs">{stats.total} 题</Badge>
-            <Badge variant="secondary" className="px-2 text-xs">
-              <FileQuestion className="h-3 w-3 mr-1" />
-              真题 {stats.real}
-            </Badge>
-            <Badge variant="outline" className="px-2 text-xs">
-              <BookOpen className="h-3 w-3 mr-1" />
-              模拟题 {stats.simulated}
-            </Badge>
-          </div>
-          <div className="hidden sm:flex items-center gap-1">
-            <Button variant="outline" size="sm">
-              <Upload className="h-4 w-4 mr-1" />
-              导入
-            </Button>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-1" />
-              导出
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowPaperDialog(true)}>
-              <Layers className="h-4 w-4 mr-1" />
-              创建套卷
-            </Button>
-          </div>
-        </div>
+              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                <span>全部 {stats.total}</span>
+                <span>真题 {stats.real}</span>
+                <span>模拟题 {stats.simulated}</span>
+                <span>筛选 {filteredQuestions.length}</span>
+              </div>
+            </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 sm:h-4 w-3.5 sm:w-4 text-muted-foreground" />
-            <Input
-              placeholder="搜索题目内容..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-7 sm:pl-8 h-8 sm:h-9 text-sm"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleImportJSON}>
+                <Upload className="mr-1.5 h-4 w-4" />
+                导入
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExportQuestions} disabled={filteredQuestions.length === 0}>
+                <Download className="mr-1.5 h-4 w-4" />
+                导出
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowPaperDialog(true)}>
+                <Layers className="mr-1.5 h-4 w-4" />
+                套卷
+              </Button>
+              <Button size="sm" onClick={() => handleOpenQuestionDialog()}>
+                <Plus className="mr-1.5 h-4 w-4" />
+                添加
+              </Button>
+            </div>
           </div>
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as any)}
-            className="shrink-0 border rounded px-2 py-1.5 text-xs sm:text-sm bg-background"
-          >
-            <option value="all">全部类型</option>
-            <option value="real">真题</option>
-            <option value="simulated">模拟题</option>
-          </select>
-          <Button variant="outline" size="icon" onClick={() => setShowPaperDialog(true)} className="h-8 w-8 shrink-0">
-            <Layers className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon" onClick={handleImportJSON} className="h-8 w-8 shrink-0">
-            <Upload className="h-4 w-4" />
-          </Button>
-          <Button size="sm" onClick={() => handleOpenQuestionDialog()} className="text-xs sm:text-sm shrink-0">
-            <Plus className="h-3 sm:h-4 w-3 sm:w-4 mr-1" />
-            <span className="hidden sm:inline">添加题目</span>
-          </Button>
+
+          <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto]">
+            <div className="relative min-w-0">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="搜索题干、解析"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 pl-8 text-sm"
+              />
+            </div>
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as 'all' | 'real' | 'simulated')}
+              className="h-9 rounded-md border bg-white px-2 text-sm"
+            >
+              <option value="all">全部类型</option>
+              <option value="real">真题</option>
+              <option value="simulated">模拟题</option>
+            </select>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-9 rounded-md border bg-white px-2 text-sm"
+              aria-label="每页题目数量"
+            >
+              <option value={10}>10题/页</option>
+              <option value={50}>50题/页</option>
+              <option value={100}>100题/页</option>
+            </select>
+          </div>
+
+          {selectedQuestions.size > 0 && (
+            <div className="grid gap-2 rounded-md border border-amber-200 bg-amber-50/60 p-2 sm:grid-cols-[auto_minmax(180px,1fr)_auto] sm:items-center">
+              <div className="text-xs font-medium text-amber-900">
+                {selectedQuestions.size} 题归入套卷
+              </div>
+              <Input
+                value={batchExamPaper}
+                onChange={(event) => setBatchExamPaper(event.target.value)}
+                placeholder="例如：2026国考副省级"
+                list="exam-paper-options"
+                className="h-8 bg-white text-xs sm:text-sm"
+              />
+              <Button size="sm" onClick={handleBatchApplyExamPaper} disabled={!batchExamPaper.trim()}>
+                应用
+              </Button>
+              <datalist id="exam-paper-options">
+                {examPaperOptions.map(option => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </div>
+          )}
         </div>
       </div>
 
@@ -515,29 +769,40 @@ export function QuestionBankManager() {
         <div className="p-2 sm:p-3 w-full max-w-full box-border">
           {filteredQuestions.length > 0 ? (
             <div className="space-y-2 sm:space-y-3 w-full max-w-full">
-              {filteredQuestions.map((question) => (
+              {pageQuestions.map((question) => (
                 <Card
                   key={question.id}
                   className={cn(
-                    'cursor-pointer transition-colors hover:border-primary/50 w-full max-w-full',
-                    selectedQuestions.has(question.id) && 'border-primary bg-primary/5'
+                    'w-full max-w-full cursor-pointer border-slate-200 shadow-none transition-colors hover:border-slate-400',
+                    selectedQuestions.has(question.id) && 'border-blue-400 bg-blue-50/60'
                   )}
                   onClick={() => handleToggleQuestionSelection(question.id)}
                 >
-                  <CardContent className="p-2 sm:p-3 w-full max-w-full">
+                  <CardContent className="w-full max-w-full p-3">
                     <div className="flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3 w-full max-w-full">
                       <div className="flex-1 min-w-0 w-full">
                         <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 mb-2 w-full">
-                          <div className="flex items-center gap-1.5 sm:gap-2">
+                          <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                            <span className={cn(
+                              'flex h-4 w-4 shrink-0 items-center justify-center rounded border bg-white',
+                              selectedQuestions.has(question.id) ? 'border-blue-500 bg-blue-500 text-white' : 'border-slate-300'
+                            )}>
+                              {selectedQuestions.has(question.id) && <Check className="h-3 w-3" />}
+                            </span>
                             <Badge
                               variant={question.type === 'real' ? 'default' : 'secondary'}
                               className="text-xs px-1.5 py-0.5 flex-shrink-0"
                             >
                               {question.type === 'real' ? '真题' : '模拟题'}
                             </Badge>
-                            <span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[150px]" title={question.knowledgePath}>
-                              {question.knowledgePath || getLinkedNodeName(question.linkedAngleId)}
+                            <span className="text-xs text-muted-foreground truncate max-w-[120px] sm:max-w-[150px]" title={getQuestionKnowledgeLabel(question)}>
+                              {getQuestionKnowledgeLabel(question)}
                             </span>
+                            {question.examPaper && (
+                              <Badge variant="outline" className="max-w-[160px] truncate border-amber-300 bg-amber-50 text-xs text-amber-800">
+                                {question.examPaper}
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 sm:hidden" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                             <Button
@@ -558,14 +823,24 @@ export function QuestionBankManager() {
                             </Button>
                           </div>
                         </div>
-                        <p className="text-xs sm:text-sm line-clamp-2 mb-2 whitespace-pre-wrap break-words word-break-all w-full">{question.content}</p>
-                        <div className="flex flex-wrap gap-1 text-xs text-muted-foreground w-full">
+                        <p className="mb-2 line-clamp-2 w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-800 word-break-all sm:line-clamp-3">{question.content}</p>
+                        <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 sm:hidden">
+                          <span className="rounded bg-[#b7e3ff]/45 px-1.5 py-0.5 font-medium text-[#5e5394]">
+                            答案 {question.correctAnswer || '-'}
+                          </span>
+                          {question.options.length > 0 && (
+                            <span>{question.options.length} 个选项</span>
+                          )}
+                          {question.explanation && <span>有解析</span>}
+                          {question.images && question.images.length > 0 && <span>{question.images.length} 图</span>}
+                        </div>
+                        <div className="hidden w-full flex-wrap gap-1 text-xs text-slate-500 sm:flex">
                           {question.options.map((opt) => (
                             <span
                               key={opt.label}
                               className={cn(
-                                'px-1.5 py-0.5 rounded text-xs max-w-full break-words word-break-all',
-                                opt.label === question.correctAnswer && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                'max-w-full rounded bg-slate-100 px-1.5 py-0.5 text-xs break-words word-break-all',
+                                opt.label === question.correctAnswer && 'bg-[#b7e3ff]/45 text-[#5e5394] dark:bg-violet-900/30 dark:text-violet-200'
                               )}
                             >
                               {opt.label}. {opt.text}
@@ -574,7 +849,7 @@ export function QuestionBankManager() {
                         </div>
                         
                         {question.explanation && (
-                          <div className="mt-2 pt-2 border-t border-dashed w-full">
+                          <div className="mt-2 hidden w-full border-t border-dashed pt-2 sm:block">
                             <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                               <Lightbulb className="h-3 w-3" />
                               <span>解析</span>
@@ -584,7 +859,7 @@ export function QuestionBankManager() {
                         )}
                         
                         {question.reference && (
-                          <div className="mt-2 pt-2 border-t border-dashed w-full">
+                          <div className="mt-2 hidden w-full border-t border-dashed pt-2 sm:block">
                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
                               <FileText className="h-3 w-3 flex-shrink-0" />
                               <span className="truncate">题目出处：{question.reference}</span>
@@ -593,7 +868,7 @@ export function QuestionBankManager() {
                         )}
                         
                         {question.images && question.images.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-dashed w-full">
+                          <div className="mt-2 hidden w-full border-t border-dashed pt-2 sm:block">
                             <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
                               <ImageIcon className="h-3 w-3" />
                               <span>解析图片</span>
@@ -601,7 +876,14 @@ export function QuestionBankManager() {
                             <div className="flex gap-1.5 overflow-x-auto pb-1.5">
                               {question.images.map((img, idx) => (
                                 <div key={idx} className="relative group cursor-pointer flex-shrink-0" onClick={() => setPreviewImage(img)}>
-                                  <img src={img} alt={`解析图 ${idx + 1}`} className="h-16 sm:h-20 object-contain rounded border" />
+                                  <Image
+                                    src={img}
+                                    alt={`解析图 ${idx + 1}`}
+                                    width={160}
+                                    height={96}
+                                    unoptimized
+                                    className="h-16 w-auto rounded border object-contain sm:h-20"
+                                  />
                                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all rounded border flex items-center justify-center">
                                     <ZoomIn className="h-4 sm:h-5 w-4 sm:w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                   </div>
@@ -633,6 +915,85 @@ export function QuestionBankManager() {
                   </CardContent>
                 </Card>
               ))}
+              <div className="flex flex-col gap-2 rounded-md border bg-white p-2 sm:p-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <label className="flex h-8 items-center gap-2 rounded-md border bg-white px-2 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={handleToggleCurrentPageSelection}
+                    />
+                    当前页
+                  </label>
+                  <Button type="button" size="sm" variant="outline" onClick={handleSelectFilteredQuestions}>
+                    {allFilteredSelected ? '取消筛选全选' : '全选筛选结果'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSelectedQuestions(new Set())}
+                    disabled={selectedQuestions.size === 0}
+                  >
+                    清空
+                  </Button>
+                  <div className="text-slate-500">
+                    已选 {selectedQuestions.size} · 共 {filteredQuestions.length}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                  <div className="text-xs text-slate-500">
+                    第 {safeCurrentPage}/{totalPages} 页 · {pageStartIndex + 1}-{Math.min(pageStartIndex + pageQuestions.length, filteredQuestions.length)} / {filteredQuestions.length}
+                  </div>
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(1)}
+                        disabled={safeCurrentPage === 1}
+                        aria-label="首页"
+                      >
+                        <ChevronsLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                        disabled={safeCurrentPage === 1}
+                        aria-label="上一页"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="min-w-16 text-center text-xs text-muted-foreground">
+                        {safeCurrentPage} / {totalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                        disabled={safeCurrentPage === totalPages}
+                        aria-label="下一页"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={safeCurrentPage === totalPages}
+                        aria-label="末页"
+                      >
+                        <ChevronsRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center p-12">
@@ -667,7 +1028,7 @@ export function QuestionBankManager() {
                     name="type"
                     value="real"
                     checked={formData.type === 'real'}
-                    onChange={(e) => setFormData({ ...formData, type: 'real' })}
+                    onChange={() => setFormData({ ...formData, type: 'real' })}
                   />
                   真题
                 </label>
@@ -677,7 +1038,7 @@ export function QuestionBankManager() {
                     name="type"
                     value="simulated"
                     checked={formData.type === 'simulated'}
-                    onChange={(e) => setFormData({ ...formData, type: 'simulated' })}
+                    onChange={() => setFormData({ ...formData, type: 'simulated' })}
                   />
                   模拟题
                 </label>
@@ -810,6 +1171,18 @@ export function QuestionBankManager() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium">题目出处</label>
+              <div className="text-sm font-medium">真题套卷</div>
+              <Input
+                value={formData.examPaper}
+                onChange={(e) => setFormData({ ...formData, examPaper: e.target.value })}
+                placeholder="例如：2026国考副省级"
+                list="exam-paper-options"
+              />
+              <p className="text-xs text-muted-foreground">MindCanvas 可按这个套卷高亮相关知识点。</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">题目出处</label>
               <Input
                 value={formData.reference}
                 onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
@@ -837,10 +1210,13 @@ export function QuestionBankManager() {
                 <div className="grid grid-cols-3 gap-2">
                   {formData.images.map((image, index) => (
                     <div key={index} className="relative group">
-                      <img
+                      <Image
                         src={image}
                         alt={`解析图片 ${index + 1}`}
-                        className="w-full h-24 object-cover rounded border"
+                        width={220}
+                        height={120}
+                        unoptimized
+                        className="h-24 w-full rounded border object-cover"
                       />
                       <button
                         onClick={() => handleRemoveImage(index)}
@@ -918,7 +1294,7 @@ export function QuestionBankManager() {
                 <label className="text-sm font-medium">套卷类型</label>
                 <select
                   value={paperFormData.type}
-                  onChange={(e) => setPaperFormData({ ...paperFormData, type: e.target.value as any })}
+                  onChange={(e) => setPaperFormData({ ...paperFormData, type: e.target.value as 'real' | 'simulated' })}
                   className="w-full border rounded px-2 py-1.5 text-sm"
                 >
                   <option value="real">真题套卷</option>
@@ -1003,7 +1379,7 @@ export function QuestionBankManager() {
                   >
                     {uploadedPaper ? (
                       <div>
-                        <Check className="h-12 w-12 mx-auto text-green-500 mb-2" />
+                        <Check className="mx-auto mb-2 h-12 w-12 text-[#a49aff]" />
                         <p className="text-sm font-medium">已上传：{uploadedPaper.name}</p>
                         <p className="text-xs text-muted-foreground">
                           共 {uploadedPaper.questions?.length || 0} 道题目
@@ -1071,12 +1447,12 @@ export function QuestionBankManager() {
                 </div>
 
                 {/* 预览上传的题目 */}
-                {uploadedPaper?.questions?.length > 0 && (
+                {!!uploadedPaper?.questions?.length && (
                   <div className="space-y-2">
                     <label className="text-sm font-medium">题目预览</label>
                     <ScrollArea className="h-[200px] border rounded">
                       <div className="p-2 space-y-2">
-                        {uploadedPaper.questions.map((q: any, idx: number) => (
+                        {uploadedPaper.questions?.map((q, idx) => (
                           <div key={idx} className="p-2 bg-muted rounded">
                             <p className="text-sm line-clamp-1">{idx + 1}. {q.content}</p>
                             <p className="text-xs text-muted-foreground">
@@ -1126,10 +1502,13 @@ export function QuestionBankManager() {
               className="relative max-w-[90vw] max-h-[90vh]"
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
-              <img
+              <Image
                 src={previewImage}
                 alt="预览图片"
-                className="max-w-full max-h-[90vh] object-contain rounded-lg"
+                width={1280}
+                height={720}
+                unoptimized
+                className="max-h-[90vh] max-w-full rounded-lg object-contain"
               />
               <button
                 onClick={() => setPreviewImage(null)}
