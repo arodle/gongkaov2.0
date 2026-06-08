@@ -7,11 +7,7 @@ import type { BehaviorEventRecord } from '@/types';
 
 const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.NEON_DATABASE_URL;
 
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required');
-}
-
-const sql = neon(databaseUrl);
+const sql = neon(databaseUrl!);
 export { sql };
 
 function toMapNodeId(id: string | null | undefined) {

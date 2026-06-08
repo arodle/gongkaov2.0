@@ -18,15 +18,16 @@ export async function GET(request: NextRequest) {
     }
 
     const rows = await getBehaviorEvents(userId, limit, questionId);
-    const events = rows
-      .filter(row => VALID_BEHAVIOR_EVENT_TYPES.has(row.event_type))
+    const eventRows = rows as Array<{ id: string; question_id: string; event_type: string; target: string; start_time: Date; end_time: Date; metadata: Record<string, unknown> | null }>;
+    const events = eventRows
+      .filter(row => VALID_BEHAVIOR_EVENT_TYPES.has(row.event_type as never))
       .map(row => {
         const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
         return normalizeBehaviorEvent({
           id: row.id,
           userId,
           questionId: row.question_id,
-          eventType: row.event_type,
+          eventType: row.event_type as never,
           target: row.target,
           startTime: new Date(row.start_time).toISOString(),
           endTime: new Date(row.end_time).toISOString(),

@@ -16,7 +16,8 @@ export async function GET(request: Request) {
       LIMIT 30
     `;
 
-    const result = nodes.map(node => ({
+    const nodeArray = nodes as Array<{ id: string; name: string; parent_id: string | null }>;
+    const result = nodeArray.map(node => ({
       original: node.name,
       cleaned: cleanName(node.name),
       parent_id: node.parent_id,
