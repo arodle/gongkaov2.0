@@ -19,6 +19,10 @@ import {
   createSnapshot,
   getPSHistory,
 } from '@/lib/db/database';
+import { normalizeBehaviorEvent } from '@/lib/behavior-events';
+import { createExamPaperId, normalizeExamPaperName } from '@/lib/exam-papers';
+import { filterInlineImageUrls } from '@/lib/image-storage';
+import { buildKnowledgeBindingIndex, normalizeKnowledgeNodeId, normalizeQuestionBinding } from '@/lib/question-binding';
 import { calculatePS, SCENARIO_COEFFICIENTS } from '@/lib/services/psCalculator';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -116,13 +120,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const records = await db.practice_records.where('user_id').equals(currentUserId).toArray();
       const history = await db.ps_history.where('user_id').equals(currentUserId).toArray();
-      const behaviorEvents = await db.behavior_events.where('userId').equals(currentUserId).toArray();
+      const behaviorEvents = (await db.behavior_events.where('userId').equals(currentUserId).toArray())
+        .map(normalizeBehaviorEvent);
       questionBankItems = normalizeQuestionLinks(questionBankItems, nodes);
+      const examPapers = neonResult.examPapers.length > 0
+        ? neonResult.examPapers
+        : deriveExamPapersFromQuestions(questionBankItems);
 
       set({
         currentUserId,
         nodes,
         questionBank: questionBankItems,
+        examPapers,
         practiceRecords: records,
         psHistory: history,
         behaviorEvents,
@@ -261,6 +270,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const currentUserId = get().currentUserId;
     const behaviorEvent: BehaviorEventRecord = {
       id: uuidv4(),
+      schemaVersion: 1,
       userId: event.userId || currentUserId,
       questionId: event.questionId,
       eventType: event.eventType,
@@ -269,15 +279,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       endTime: event.endTime,
       metadata: event.metadata || {},
     };
+    const normalizedEvent = normalizeBehaviorEvent(behaviorEvent);
 
     void db.behavior_events.put({
-      ...behaviorEvent,
+      ...normalizedEvent,
       sync_status: 'pending',
       created_at: new Date().toISOString(),
     }).then(() => get().flushBehaviorEvents());
 
     set(state => ({
-      behaviorEvents: [...state.behaviorEvents, behaviorEvent],
+      behaviorEvents: [...state.behaviorEvents, normalizedEvent],
     }));
   },
 
@@ -325,15 +336,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addQuestion: (question: QuestionBankItem) => {
+    const sanitizedQuestion = sanitizeQuestionImages(question);
     set(state => ({
-      questionBank: [...state.questionBank, question],
+      questionBank: [...state.questionBank, sanitizedQuestion],
     }));
   },
 
   updateQuestion: (question: QuestionBankItem) => {
+    const sanitizedQuestion = sanitizeQuestionImages(question);
     set(state => ({
       questionBank: state.questionBank.map(q =>
-        q.id === question.id ? question : q
+        q.id === sanitizedQuestion.id ? sanitizedQuestion : q
       ),
     }));
   },
@@ -436,6 +449,16 @@ interface NeonSyncQuestion {
   exam_paper?: string;
 }
 
+interface NeonSyncExamPaper {
+  id: string;
+  name: string;
+  description?: string | null;
+  type?: string;
+  question_count?: number;
+  question_ids?: string[];
+  created_at?: string;
+}
+
 interface SampleMindMapNode {
   id: string;
   name: string;
@@ -446,12 +469,48 @@ interface SampleMindMapNode {
 }
 
 function normalizeQuestionNodeId(id?: string | null) {
-  if (!id) return '';
-  return id.startsWith('mn_') ? id.slice(3) : id;
+  return normalizeKnowledgeNodeId(id);
+}
+
+function sanitizeQuestionImages<T extends QuestionBankItem>(question: T): T {
+  const { images } = filterInlineImageUrls(question.images);
+  return { ...question, images };
+}
+
+function deriveExamPapersFromQuestions(questions: QuestionBankItem[]): ExamPaper[] {
+  const byName = new Map<string, ExamPaper>();
+
+  questions.forEach(question => {
+    const name = normalizeExamPaperName(question.examPaper);
+    if (!name) return;
+
+    const existing = byName.get(name);
+    if (existing) {
+      existing.questions.push(question.id);
+      existing.questionCount = existing.questions.length;
+      return;
+    }
+
+    byName.set(name, {
+      id: createExamPaperId(name),
+      name,
+      description: '',
+      type: question.type === 'simulated' ? 'simulated' : 'real',
+      questions: [question.id],
+      questionCount: 1,
+      createdAt: question.createdAt || new Date().toISOString(),
+      completedCount: 0,
+      avgScore: 0,
+    });
+  });
+
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function normalizeQuestionLinks(questions: QuestionBankItem[], nodes: KnowledgeNodeRecord[]) {
   if (questions.length === 0 || nodes.length === 0) return questions;
+  const bindingIndex = buildKnowledgeBindingIndex(nodes);
+  return questions.map(question => normalizeQuestionBinding(question, bindingIndex));
 
   const byId = new Map<string, KnowledgeNodeRecord>();
   const byName = new Map<string, KnowledgeNodeRecord>();
@@ -525,7 +584,7 @@ async function getClientUserId() {
 }
 
 async function ensureServerTablesInitialized() {
-  const initVersion = '2026-05-28-exam-paper';
+  const initVersion = '2026-06-04-question-soft-delete';
   const storageKey = 'gongkao.serverInitVersion';
 
   if (typeof window !== 'undefined' && window.localStorage.getItem(storageKey) === initVersion) {
@@ -567,13 +626,26 @@ async function ensureLocalUserBoundary(userId: string) {
 async function fetchFromNeon(currentUserId = CURRENT_USER_ID) {
   try {
     const response = await fetch('/api/sync');
-    if (!response.ok) return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+    if (!response.ok) {
+      return {
+        nodes: [] as KnowledgeNodeRecord[],
+        questionBank: [] as QuestionBankItem[],
+        examPapers: [] as ExamPaper[],
+      };
+    }
 
     const json = await response.json();
-    if (!json.success) return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+    if (!json.success) {
+      return {
+        nodes: [] as KnowledgeNodeRecord[],
+        questionBank: [] as QuestionBankItem[],
+        examPapers: [] as ExamPaper[],
+      };
+    }
 
     const knowledgeNodes: NeonSyncNode[] = json.data?.knowledgeNodes ?? [];
     const questions: NeonSyncQuestion[] = json.data?.questions ?? [];
+    const examPaperRecords: NeonSyncExamPaper[] = json.data?.examPapers ?? [];
 
     const nodes: KnowledgeNodeRecord[] = knowledgeNodes.map(n => ({
       id: n.id,
@@ -609,13 +681,34 @@ async function fetchFromNeon(currentUserId = CURRENT_USER_ID) {
       source: q.source,
       type: (q.type as 'real' | 'simulated') || (q.source as 'real' | 'simulated'),
       reference: q.reference,
-      examPaper: q.exam_paper,
+      examPaper: normalizeExamPaperName(q.exam_paper),
       createdAt: new Date().toISOString(),
     }));
 
-    return { nodes, questionBank: questionBankItems };
+    const examPapers: ExamPaper[] = examPaperRecords.map(paper => {
+      const name = normalizeExamPaperName(paper.name);
+      const questions = Array.isArray(paper.question_ids) ? paper.question_ids : [];
+
+      return {
+        id: paper.id || createExamPaperId(name),
+        name,
+        description: paper.description || '',
+        type: paper.type === 'simulated' ? 'simulated' as const : 'real' as const,
+        questions,
+        questionCount: Number(paper.question_count || questions.length) || questions.length,
+        createdAt: paper.created_at || new Date().toISOString(),
+        completedCount: 0,
+        avgScore: 0,
+      };
+    }).filter(paper => paper.name);
+
+    return { nodes, questionBank: questionBankItems, examPapers };
   } catch {
-    return { nodes: [] as KnowledgeNodeRecord[], questionBank: [] as QuestionBankItem[] };
+    return {
+      nodes: [] as KnowledgeNodeRecord[],
+      questionBank: [] as QuestionBankItem[],
+      examPapers: [] as ExamPaper[],
+    };
   }
 }
 

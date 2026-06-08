@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBehaviorEvents } from '@/lib/db/neon-service';
+import { VALID_BEHAVIOR_EVENT_TYPES, normalizeBehaviorEvent } from '@/lib/behavior-events';
 import { authErrorResponse, getRequestUserId } from '@/lib/server/auth';
-import type { BehaviorEventType } from '@/types';
-
-const VALID_EVENT_TYPES = new Set<BehaviorEventType>([
-  'highlight',
-  'circle',
-  'strike',
-  'answer_select',
-  'answer_change',
-  'note',
-]);
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,17 +19,20 @@ export async function GET(request: NextRequest) {
 
     const rows = await getBehaviorEvents(userId, limit, questionId);
     const events = rows
-      .filter(row => VALID_EVENT_TYPES.has(row.event_type as BehaviorEventType))
-      .map(row => ({
-        id: row.id,
-        userId,
-        questionId: row.question_id,
-        eventType: row.event_type,
-        target: row.target,
-        startTime: new Date(row.start_time).toISOString(),
-        endTime: new Date(row.end_time).toISOString(),
-        metadata: row.metadata || {},
-      }));
+      .filter(row => VALID_BEHAVIOR_EVENT_TYPES.has(row.event_type))
+      .map(row => {
+        const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        return normalizeBehaviorEvent({
+          id: row.id,
+          userId,
+          questionId: row.question_id,
+          eventType: row.event_type,
+          target: row.target,
+          startTime: new Date(row.start_time).toISOString(),
+          endTime: new Date(row.end_time).toISOString(),
+          metadata,
+        });
+      });
 
     return NextResponse.json({ success: true, events });
   } catch (err) {

@@ -7,6 +7,9 @@ import {
   deleteKnowledgeNodes,
   getQuestions,
   upsertQuestions,
+  softDeleteQuestions,
+  getExamPapers,
+  upsertExamPapers,
   getAnswerRecords,
   insertAnswerRecords,
   getPracticeSets,
@@ -15,26 +18,18 @@ import {
   insertBehaviorEvents,
 } from '@/lib/db/neon-service';
 import { authErrorResponse, getRequestUserId } from '@/lib/server/auth';
-import type { BehaviorEventType } from '@/types';
-
-const VALID_BEHAVIOR_EVENT_TYPES = new Set<BehaviorEventType>([
-  'highlight',
-  'circle',
-  'strike',
-  'answer_select',
-  'answer_change',
-  'note',
-]);
+import { isValidBehaviorEvent, normalizeBehaviorEvent } from '@/lib/behavior-events';
 
 export async function GET(request: NextRequest) {
   try {
     const userId = await getRequestUserId(request);
     const includeBehaviorEvents = request.nextUrl.searchParams.get('includeBehaviorEvents') === '1';
 
-    const [mindMaps, knowledgeNodes, questions, answers, practiceSets] = await Promise.all([
+    const [mindMaps, knowledgeNodes, questions, examPapers, answers, practiceSets] = await Promise.all([
       getMindMaps(userId),
       getKnowledgeNodes(userId),
       getQuestions(userId),
+      getExamPapers(userId),
       getAnswerRecords(userId),
       getPracticeSets(userId),
     ]);
@@ -47,6 +42,7 @@ export async function GET(request: NextRequest) {
         mindMaps: mindMaps ?? [],
         knowledgeNodes: knowledgeNodes ?? [],
         questions: questions ?? [],
+        examPapers: examPapers ?? [],
         answers: answers ?? [],
         practiceSets: practiceSets ?? [],
         behaviorEvents: behaviorEvents ?? [],
@@ -66,7 +62,7 @@ export async function POST(request: NextRequest) {
   try {
     const userId = await getRequestUserId(request);
     const body = await request.json();
-    const { mindMap, knowledgeNode, deleteNodeIds, questions, answers, practiceSets, behaviorEvents } = body as {
+    const { mindMap, knowledgeNode, deleteNodeIds, deleteQuestionIds, questions, examPapers, answers, practiceSets, behaviorEvents } = body as {
       mindMap?: { id?: string; name?: string; data: unknown };
       knowledgeNode?: {
         id: string;
@@ -80,7 +76,9 @@ export async function POST(request: NextRequest) {
         annotation?: string;
       };
       deleteNodeIds?: string[];
+      deleteQuestionIds?: string[];
       questions?: Array<Record<string, unknown>>;
+      examPapers?: Array<Record<string, unknown>>;
       answers?: Array<Record<string, unknown>>;
       practiceSets?: Array<Record<string, unknown>>;
       behaviorEvents?: Array<Record<string, unknown>>;
@@ -103,9 +101,19 @@ export async function POST(request: NextRequest) {
       results.nodesDeleted = deleteNodeIds.length;
     }
 
+    if (deleteQuestionIds && deleteQuestionIds.length > 0) {
+      const deletedQuestionCount = await softDeleteQuestions(userId, deleteQuestionIds);
+      results.questionsDeleted = deletedQuestionCount;
+    }
+
     if (questions && questions.length > 0) {
       const questionCount = await upsertQuestions(userId, questions);
       results.questionCount = questionCount;
+    }
+
+    if (examPapers && examPapers.length > 0) {
+      const examPaperCount = await upsertExamPapers(userId, examPapers);
+      results.examPaperCount = examPaperCount;
     }
 
     if (answers && answers.length > 0) {
@@ -119,14 +127,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (behaviorEvents && behaviorEvents.length > 0) {
-      const validBehaviorEvents = behaviorEvents.filter(event => (
-        typeof event.questionId === 'string'
-        && typeof event.eventType === 'string'
-        && VALID_BEHAVIOR_EVENT_TYPES.has(event.eventType as BehaviorEventType)
-        && typeof event.target === 'string'
-        && typeof event.startTime === 'string'
-        && typeof event.endTime === 'string'
-      ));
+      const validBehaviorEvents = behaviorEvents
+        .map(event => normalizeBehaviorEvent({ ...event, userId } as never))
+        .filter(isValidBehaviorEvent);
       const behaviorEventCount = await insertBehaviorEvents(userId, validBehaviorEvents);
       results.behaviorEventCount = behaviorEventCount;
     }

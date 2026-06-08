@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { neon } from '@neondatabase/serverless';
 import { DEFAULT_USER_ID } from '@/lib/server/auth';
+import { createExamPaperId, normalizeExamPaperName } from '@/lib/exam-papers';
+import { normalizeBehaviorEvent } from '@/lib/behavior-events';
+import type { BehaviorEventRecord } from '@/types';
 
 const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.NEON_DATABASE_URL;
 
@@ -187,17 +190,97 @@ export async function getQuestions(userId: string = DEFAULT_USER_ID) {
            source, mind_map_id, type, reference, exam_paper, created_at
     FROM question_bank
     WHERE user_id = ${userId}
+      AND deleted_at IS NULL
     ORDER BY created_at DESC
   `;
   return result;
+}
+
+export async function getExamPapers(userId: string = DEFAULT_USER_ID) {
+  const result = await sql`
+    SELECT
+      ep.id,
+      ep.name,
+      ep.description,
+      ep.type,
+      ep.question_count,
+      ep.created_at,
+      ep.updated_at,
+      COALESCE(array_remove(array_agg(q.id ORDER BY q.created_at DESC), NULL), ARRAY[]::varchar[]) AS question_ids
+    FROM exam_papers ep
+    LEFT JOIN question_bank q
+      ON q.user_id = ep.user_id
+      AND q.exam_paper = ep.normalized_name
+    WHERE ep.user_id = ${userId}
+    GROUP BY ep.id, ep.name, ep.description, ep.type, ep.question_count, ep.created_at, ep.updated_at
+    ORDER BY ep.updated_at DESC
+  `;
+  return result;
+}
+
+export async function upsertExamPapers(
+  userId: string,
+  papers: Array<Record<string, unknown>>
+) {
+  let saved = 0;
+
+  for (const paper of papers) {
+    const normalizedName = normalizeExamPaperName(paper.name as string);
+    if (!normalizedName) continue;
+
+    const id = (paper.id as string) || createExamPaperId(normalizedName);
+    const type = ((paper.type as string) || 'real') === 'simulated' ? 'simulated' : 'real';
+    const questionIds = Array.isArray(paper.question_ids)
+      ? paper.question_ids
+      : Array.isArray(paper.questions)
+        ? paper.questions
+        : [];
+    const questionCount = Number(paper.question_count ?? paper.questionCount ?? questionIds.length) || 0;
+
+    await sql`
+      INSERT INTO exam_papers (
+        id, user_id, name, normalized_name, description, type, question_count, updated_at
+      ) VALUES (
+        ${id},
+        ${userId},
+        ${normalizedName},
+        ${normalizedName},
+        ${paper.description as string || null},
+        ${type},
+        ${questionCount},
+        NOW()
+      )
+      ON CONFLICT (user_id, normalized_name) DO UPDATE SET
+        name = EXCLUDED.name,
+        description = COALESCE(EXCLUDED.description, exam_papers.description),
+        type = EXCLUDED.type,
+        question_count = GREATEST(exam_papers.question_count, EXCLUDED.question_count),
+        updated_at = NOW()
+    `;
+    saved += 1;
+  }
+
+  return saved;
 }
 
 export async function upsertQuestions(
   userId: string,
   questions: Array<Record<string, unknown>>
 ) {
+  const papersByName = new Map<string, Record<string, unknown>>();
+
   for (const q of questions) {
     const id = (q.id as string) || `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const examPaper = normalizeExamPaperName(q.exam_paper as string);
+
+    if (examPaper) {
+      papersByName.set(examPaper, {
+        name: examPaper,
+        type: (q.type as string) || (q.source as string) || 'real',
+        question_count: (papersByName.get(examPaper)?.question_count as number || 0) + 1,
+      });
+    }
+
     await sql`
       INSERT INTO question_bank (
         id, user_id, question_text, option_a, option_b, option_c, option_d,
@@ -217,7 +300,7 @@ export async function upsertQuestions(
         ${(q.source as string) || (q.type as string) || 'manual'},
         ${(q.type as string) || (q.source as string) || 'real'},
         ${q.reference as string || null},
-        ${q.exam_paper as string || null},
+        ${examPaper || null},
         ${q.mind_map_id as string || null}
       )
       ON CONFLICT (id) DO UPDATE SET
@@ -234,10 +317,34 @@ export async function upsertQuestions(
         type = EXCLUDED.type,
         reference = EXCLUDED.reference,
         exam_paper = EXCLUDED.exam_paper,
-        mind_map_id = EXCLUDED.mind_map_id
+        mind_map_id = EXCLUDED.mind_map_id,
+        deleted_at = NULL
     `;
   }
+
+  if (papersByName.size > 0) {
+    await upsertExamPapers(userId, Array.from(papersByName.values()));
+  }
+
   return questions.length;
+}
+
+export async function softDeleteQuestions(
+  userId: string,
+  questionIds: string[]
+) {
+  const ids = Array.from(new Set(questionIds.filter(Boolean)));
+  if (ids.length === 0) return 0;
+
+  await sql`
+    UPDATE question_bank
+    SET deleted_at = NOW()
+    WHERE user_id = ${userId}
+      AND id = ANY(${ids})
+      AND deleted_at IS NULL
+  `;
+
+  return ids.length;
 }
 
 export async function getAnswerRecords(userId: string = DEFAULT_USER_ID, limit: number = 5000) {
@@ -306,7 +413,7 @@ export async function getBehaviorEvents(userId: string = DEFAULT_USER_ID, limit:
 
 export async function insertBehaviorEvents(
   userId: string,
-  events: Array<Record<string, unknown>>
+  events: BehaviorEventRecord[]
 ) {
   await sql`
     CREATE TABLE IF NOT EXISTS behavior_events (
@@ -323,6 +430,7 @@ export async function insertBehaviorEvents(
   `;
 
   for (const event of events) {
+    const normalizedEvent = normalizeBehaviorEvent(event);
     const id = (event.id as string) || `be_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     await sql`
       INSERT INTO behavior_events (
@@ -330,12 +438,12 @@ export async function insertBehaviorEvents(
       ) VALUES (
         ${id},
         ${userId},
-        ${event.questionId as string},
-        ${event.eventType as string},
-        ${event.target as string},
-        ${event.startTime as string},
-        ${event.endTime as string},
-        ${JSON.stringify(event.metadata || {})}
+        ${normalizedEvent.questionId as string},
+        ${normalizedEvent.eventType as string},
+        ${normalizedEvent.target as string},
+        ${normalizedEvent.startTime as string},
+        ${normalizedEvent.endTime as string},
+        ${JSON.stringify(normalizedEvent.metadata)}
       )
       ON CONFLICT (id) DO NOTHING
     `;

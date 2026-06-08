@@ -73,6 +73,7 @@ export interface QuestionBankItem {
   knowledgePath?: string;
   source?: string;
   type?: 'real' | 'simulated';
+  questionType?: string;
   reference?: string;
   examPaper?: string;
   createdAt: string;
@@ -98,6 +99,7 @@ export type BehaviorEventType =
 
 export interface BehaviorEventRecord {
   id?: string;
+  schemaVersion?: number;
   questionId: string;
   userId: string;
   eventType: BehaviorEventType;
@@ -123,6 +125,7 @@ export interface ExamPaper {
   description: string;
   type: 'real' | 'simulated';
   questions: string[];
+  questionCount?: number;
   createdAt: string;
   completedCount: number;
   avgScore: number;
@@ -137,7 +140,7 @@ export interface SimulatedPaperConfig {
   createdAt: string;
 }
 
-export type AppTab = 'mindmap' | 'practice' | 'exam' | 'bank' | 'wrongbook' | 'report' | 'center';
+export type AppTab = 'mindmap' | 'practice' | 'exam' | 'bank' | 'wrongbook' | 'report' | 'center' | 'manual';
 
 export interface PSColorConfig {
   background: string;

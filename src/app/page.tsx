@@ -1,17 +1,24 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
 import { MindCanvas } from '@/components/KnowledgeGraph/MindCanvas';
 import { MindEditor } from '@/components/KnowledgeGraph/MindEditor';
 import { PracticeSelector, PracticeSession } from '@/components/Practice/PracticeComponents';
 import { ReportDashboard } from '@/components/Report/ReportComponents';
-import { CenterDashboard } from '@/components/Center/CenterComponents';
+import { CenterDashboard, ManualPanel } from '@/components/Center/CenterComponents';
 import { WrongAnswerNotebook } from '@/components/WrongAnswerNotebook/WrongAnswerNotebook';
 import { QuestionBankManager } from '@/components/QuestionBank/QuestionBankManager';
 import { AuthGate } from '@/components/AuthGate';
 import { cn } from '@/lib/utils';
+import {
+  buildDailyTrainingPlan,
+  buildDailyTrainingPlanSummary,
+  type DailyTrainingPlanSummary,
+  type QuestionReviewMeta,
+  type WrongReasonTag,
+} from '@/lib/practice-insights';
 import type { AppTab, QuestionBankItem, PracticeMode } from '@/types';
 import {
   GitBranch,
@@ -27,6 +34,12 @@ import {
   Settings,
   BookMarked,
   Database,
+  Monitor,
+  HelpCircle,
+  Sparkles,
+  Repeat2,
+  ListChecks,
+  Flame,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +51,33 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 
+function MobileOperatorGate({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center bg-slate-50 px-4 py-8 md:hidden">
+      <div className="w-full max-w-sm rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-700">
+          <Monitor className="h-5 w-5" />
+        </div>
+        <h2 className="text-base font-semibold text-slate-950">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+        <Button type="button" className="mt-4 w-full" onClick={onAction}>
+          {actionLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const {
     isInitialized,
@@ -46,6 +86,7 @@ function AppContent() {
     initialize,
     nodes,
     questionBank,
+    practiceRecords,
     getWeakNodes,
     getQuestionByAngleId,
   } = useAppStore();
@@ -54,9 +95,12 @@ function AppContent() {
   const [practiceMode, setPracticeMode] = useState<PracticeMode | null>(null);
   const [isPracticeActive, setIsPracticeActive] = useState(false);
   const [mindmapView, setMindmapView] = useState<'canvas' | 'mindeditor'>('mindeditor');
+  const [mindmapFocusNodeId, setMindmapFocusNodeId] = useState<string | null>(null);
   const [practiceTargetNodeId, setPracticeTargetNodeId] = useState<string | null>(null);
   const [practiceCount, setPracticeCount] = useState<number>(0);
   const [answerMode, setAnswerMode] = useState<'instant' | 'batch'>('instant');
+  const [customPracticeQueue, setCustomPracticeQueue] = useState<QuestionBankItem[] | null>(null);
+  const [practiceSessionTitle, setPracticeSessionTitle] = useState('');
 
   useEffect(() => {
     initialize();
@@ -77,6 +121,99 @@ function AppContent() {
 
   const weakNodes = getWeakNodes();
   const weakCount = weakNodes.length;
+  const smartPracticeCards = useMemo(() => {
+    const weakIds = new Set(weakNodes.map(node => node.id));
+    const practicedIds = new Set(practiceRecords.map(record => record.question_id));
+    const wrongRecordIds = new Set(
+      practiceRecords
+        .filter(record => !record.is_correct)
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .map(record => record.question_id)
+    );
+
+    const dedupe = (items: QuestionBankItem[]) => {
+      const seen = new Set<string>();
+      return items.filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+    };
+
+    const weakQuestions = questionBank.filter(question => weakIds.has(question.linkedAngleId));
+    const wrongQuestions = questionBank.filter(question => wrongRecordIds.has(question.id));
+    const freshQuestions = questionBank.filter(question => !practicedIds.has(question.id));
+    const mixedQuestions = dedupe([...wrongQuestions, ...weakQuestions, ...freshQuestions, ...questionBank]);
+
+    return [
+      {
+        id: 'rescue',
+        title: '薄弱点抢救',
+        description: '优先练 PS 偏低知识点，适合每天开局先补短板。',
+        icon: Flame,
+        tone: 'border-red-200 bg-red-50/70 text-red-700',
+        questions: dedupe([...wrongQuestions, ...weakQuestions]),
+        mode: 'targeted' as PracticeMode,
+      },
+      {
+        id: 'wrong',
+        title: '错题回炉',
+        description: '只拉近期错过的题，复盘同类失误更快。',
+        icon: Repeat2,
+        tone: 'border-amber-200 bg-amber-50/80 text-amber-700',
+        questions: wrongQuestions,
+        mode: 'targeted' as PracticeMode,
+      },
+      {
+        id: 'fresh',
+        title: '未练新题',
+        description: '补齐题库覆盖面，避免一直刷熟题。',
+        icon: ListChecks,
+        tone: 'border-sky-200 bg-sky-50/80 text-sky-700',
+        questions: freshQuestions,
+        mode: 'sequence' as PracticeMode,
+      },
+      {
+        id: 'mixed',
+        title: '综合平衡',
+        description: '错题、薄弱点、新题混合，适合一轮完整训练。',
+        icon: Sparkles,
+        tone: 'border-violet-200 bg-violet-50/80 text-violet-700',
+        questions: mixedQuestions,
+        mode: 'random' as PracticeMode,
+      },
+    ];
+  }, [practiceRecords, questionBank, weakNodes]);
+
+  const reviewMetaByQuestion = useMemo<Record<string, QuestionReviewMeta>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = window.localStorage.getItem('gongkao:question-review-meta');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }, [practiceRecords.length, questionBank.length]);
+
+  const dailyTrainingQuestions = useMemo(() => (
+    buildDailyTrainingPlan(questionBank, practiceRecords, reviewMetaByQuestion, 15)
+  ), [practiceRecords, questionBank, reviewMetaByQuestion]);
+
+  const dailyTrainingSummary = useMemo<DailyTrainingPlanSummary>(() => (
+    buildDailyTrainingPlanSummary(dailyTrainingQuestions, practiceRecords, reviewMetaByQuestion)
+  ), [dailyTrainingQuestions, practiceRecords, reviewMetaByQuestion]);
+
+  const examPaperPracticeOptions = useMemo(() => {
+    const map = new Map<string, number>();
+    questionBank.forEach(question => {
+      const name = question.examPaper?.trim();
+      if (!name) return;
+      map.set(name, (map.get(name) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([name, questionCount]) => ({ name, questionCount }))
+      .sort((left, right) => right.questionCount - left.questionCount);
+  }, [questionBank]);
 
   const tabs: Array<{ id: AppTab; label: string; shortLabel: string; group: string; icon: React.ElementType; description: string }> = [
     { id: 'mindmap', label: 'MindCanvas', shortLabel: '导图', group: '学习', icon: GitBranch, description: '知识学习、节点练习与套卷高亮' },
@@ -85,13 +222,68 @@ function AppContent() {
     { id: 'bank', label: '题库管理', shortLabel: '题库', group: '运营', icon: Database, description: '题目、套卷、知识点绑定管理' },
     { id: 'report', label: '数据报告', shortLabel: '报告', group: '分析', icon: BarChart3, description: '学习表现、薄弱点和做题记录回放' },
     { id: 'center', label: '个人中心', shortLabel: '我的', group: '系统', icon: User, description: '账号、同步和个人数据' },
+    { id: 'manual', label: '平台用户手册', shortLabel: '手册', group: '系统', icon: HelpCircle, description: '查看平台使用流程和常见问题' },
   ];
+  const mobileTabs = tabs.filter(tab => tab.id !== 'bank' && tab.id !== 'manual');
   const activeTabMeta = tabs.find(tab => tab.id === activeTab) || tabs[0];
+  const isMobileOperatorTab = activeTab === 'bank';
 
   const handleStartPractice = (mode: 'sequence' | 'random' | 'targeted' | 'exam') => {
+    if (mode === 'exam' && examPaperPracticeOptions[0]) {
+      const paperName = examPaperPracticeOptions[0].name;
+      const questions = questionBank.filter(question => question.examPaper === paperName);
+      setCustomPracticeQueue(questions);
+      setPracticeSessionTitle(paperName);
+      setAnswerMode('batch');
+      setPracticeMode('exam');
+      setPracticeTargetNodeId(null);
+      setIsPracticeActive(true);
+      return;
+    }
+    setCustomPracticeQueue(null);
+    setPracticeSessionTitle('');
     setPracticeMode(mode);
     setIsPracticeActive(true);
   };
+
+  const handleStartSmartPractice = (mode: PracticeMode, questions: QuestionBankItem[]) => {
+    const limitedQuestions = practiceCount > 0 ? questions.slice(0, practiceCount) : questions;
+    setCustomPracticeQueue(limitedQuestions);
+    setPracticeSessionTitle('');
+    setPracticeMode(mode);
+    setPracticeTargetNodeId(null);
+    setIsPracticeActive(true);
+  };
+
+  const handleStartDailyPlan = useCallback(() => {
+    const limitedQuestions = practiceCount > 0 ? dailyTrainingQuestions.slice(0, practiceCount) : dailyTrainingQuestions;
+    setCustomPracticeQueue(limitedQuestions);
+    setPracticeSessionTitle('每日训练计划');
+    setPracticeMode('targeted');
+    setPracticeTargetNodeId(null);
+    setIsPracticeActive(true);
+  }, [dailyTrainingQuestions, practiceCount]);
+
+  const handleStartExamPaper = useCallback((paperName: string) => {
+    const questions = questionBank.filter(question => question.examPaper === paperName);
+    setCustomPracticeQueue(questions);
+    setPracticeSessionTitle(paperName);
+    setAnswerMode('batch');
+    setPracticeMode('exam');
+    setPracticeTargetNodeId(null);
+    setIsPracticeActive(true);
+  }, [questionBank]);
+
+  const handleStartReasonPractice = useCallback((reason: { tag: WrongReasonTag; label: string; questions: QuestionBankItem[] }) => {
+    const limitedQuestions = practiceCount > 0 ? reason.questions.slice(0, practiceCount) : reason.questions;
+    setCustomPracticeQueue(limitedQuestions);
+    setPracticeSessionTitle(`错因专项：${reason.label}`);
+    setAnswerMode('instant');
+    setPracticeMode('targeted');
+    setPracticeTargetNodeId(null);
+    setActiveTab('practice');
+    setIsPracticeActive(true);
+  }, [practiceCount]);
 
   const handlePracticeComplete = () => {
     // User will exit via button
@@ -101,17 +293,31 @@ function AppContent() {
     setIsPracticeActive(false);
     setPracticeMode(null);
     setPracticeTargetNodeId(null);
+    setCustomPracticeQueue(null);
+    setPracticeSessionTitle('');
   };
 
   const handleTargetedPracticeFromNode = (nodeId: string) => {
     setPracticeTargetNodeId(nodeId);
+    setCustomPracticeQueue(null);
+    setPracticeSessionTitle('');
     setPracticeMode('targeted');
     setIsPracticeActive(true);
     setActiveTab('practice');
   };
 
+  const handleJumpToMindNode = useCallback((nodeId: string) => {
+    setMindmapFocusNodeId(nodeId);
+    setMindmapView('canvas');
+    setActiveTab('mindmap');
+  }, []);
+
   const getPracticeQuestions = useCallback((): QuestionBankItem[] => {
     let questions: QuestionBankItem[];
+
+    if (customPracticeQueue) {
+      return customPracticeQueue;
+    }
     
     if (!practiceMode || practiceMode === 'exam') {
       questions = questionBank;
@@ -133,7 +339,7 @@ function AppContent() {
     }
     
     return questions;
-  }, [practiceMode, questionBank, weakNodes, practiceTargetNodeId, getQuestionByAngleId, practiceCount]);
+  }, [practiceMode, questionBank, weakNodes, practiceTargetNodeId, getQuestionByAngleId, practiceCount, customPracticeQueue]);
 
   if (!isInitialized) {
     return (
@@ -375,9 +581,22 @@ function AppContent() {
 
                 <div className="flex-1 overflow-hidden">
                   {mindmapView === 'canvas' ? (
-                    <MindCanvas onTargetedPractice={handleTargetedPracticeFromNode} />
+                    <MindCanvas
+                      focusNodeId={mindmapFocusNodeId}
+                      onTargetedPractice={handleTargetedPracticeFromNode}
+                    />
                   ) : (
-                    <MindEditor onTargetedPractice={handleTargetedPracticeFromNode} />
+                    <>
+                      <MobileOperatorGate
+                        title="Mind 编辑建议在桌面端操作"
+                        description="新增节点、调整层级、批量维护正文和截图属于运营维护动作，小屏容易误触。"
+                        actionLabel="返回导图"
+                        onAction={() => setMindmapView('canvas')}
+                      />
+                      <div className="hidden h-full md:block">
+                        <MindEditor onTargetedPractice={handleTargetedPracticeFromNode} />
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -462,7 +681,63 @@ function AppContent() {
                     </div>
                   </div>
 
-                  <PracticeSelector onSelectMode={handleStartPractice} />
+                  <div className="mb-6 rounded-xl border border-[#e8ecf7] bg-white p-3 shadow-[0_12px_32px_rgba(76,68,128,0.06)] sm:p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-violet-600" />
+                        <h3 className="text-sm font-semibold text-slate-950">智能推荐训练</h3>
+                      </div>
+                      <Badge variant="outline" className="text-[11px]">
+                        按薄弱点、错题、未练题自动组卷
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                      {smartPracticeCards.map(card => {
+                        const Icon = card.icon;
+                        const disabled = card.questions.length === 0;
+                        return (
+                          <button
+                            key={card.id}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => handleStartSmartPractice(card.mode, card.questions)}
+                            className={cn(
+                              'flex min-h-[116px] flex-col justify-between rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-45',
+                              card.tone
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <Icon className="h-4 w-4 shrink-0" />
+                                  <span className="text-sm font-semibold">{card.title}</span>
+                                </div>
+                                <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                                  {card.description}
+                                </p>
+                              </div>
+                              <Badge variant="secondary" className="shrink-0 text-[11px]">
+                                {card.questions.length} 题
+                              </Badge>
+                            </div>
+                            <span className="mt-3 text-xs font-medium">
+                              {disabled ? '暂无可练题' : '开始推荐训练'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <PracticeSelector
+                    onSelectMode={handleStartPractice}
+                    onSelectExamPaper={handleStartExamPaper}
+                    onStartDailyPlan={handleStartDailyPlan}
+                    examPapers={examPaperPracticeOptions}
+                    dailyPlanCount={dailyTrainingQuestions.length}
+                    dailyPlanSummary={dailyTrainingSummary}
+                  />
 
                   <div className="mt-6 sm:mt-8 p-3 sm:p-4 rounded-xl bg-muted/50 text-center">
                     <p className="text-sm text-muted-foreground">
@@ -491,6 +766,7 @@ function AppContent() {
                     questions={getPracticeQuestions()}
                     mode={practiceMode}
                     answerMode={answerMode}
+                    sessionTitle={practiceSessionTitle}
                     onComplete={handlePracticeComplete}
                     onExit={handleExitPractice}
                   />
@@ -507,7 +783,23 @@ function AppContent() {
               exit={{ opacity: 0, x: -20 }}
               className="h-full flex flex-col min-h-0"
             >
-              <QuestionBankManager />
+              {isMobileOperatorTab && (
+                <MobileOperatorGate
+                  title="题库管理建议在桌面端操作"
+                  description="新增题目、批量导入、套卷维护和知识点重绑都需要较大的操作空间。"
+                  actionLabel="去练习"
+                  onAction={() => setActiveTab('practice')}
+                />
+              )}
+              {isMobileOperatorTab && (
+                <div className="hidden">
+                  <Monitor className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>题库管理属于运营功能，批量编辑和套卷维护建议在桌面端操作。</span>
+                </div>
+              )}
+              <div className="hidden h-full md:block">
+                <QuestionBankManager />
+              </div>
             </motion.div>
           )}
 
@@ -525,7 +817,10 @@ function AppContent() {
                   <p className="text-xs text-muted-foreground">左侧展示错题，右侧编辑笔记，绑定完整知识层级标签</p>
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <WrongAnswerNotebook />
+                  <WrongAnswerNotebook
+                    onJumpToNode={handleJumpToMindNode}
+                    onStartReasonPractice={handleStartReasonPractice}
+                  />
                 </div>
               </div>
             </motion.div>
@@ -554,14 +849,26 @@ function AppContent() {
               <CenterDashboard />
             </motion.div>
           )}
+
+          {activeTab === 'manual' && (
+            <motion.div
+              key="manual"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="h-full min-h-0 overflow-auto p-6"
+            >
+              <ManualPanel onNavigate={setActiveTab} />
+            </motion.div>
+          )}
         </AnimatePresence>
           </div>
         </main>
       </div>
 
       {!isPracticeActive && (
-        <nav className="!fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-6 border-t border-[#eee7ff] bg-white/94 px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_rgba(76,68,128,0.08)] backdrop-blur-md md:hidden">
-          {tabs.map((tab) => {
+        <nav className="!fixed inset-x-0 bottom-0 z-50 grid h-16 grid-cols-5 border-t border-[#eee7ff] bg-white/94 px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_rgba(76,68,128,0.08)] backdrop-blur-md md:hidden">
+          {mobileTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (

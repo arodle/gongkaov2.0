@@ -2,12 +2,12 @@
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
 import {
   ArrowDown,
   ArrowLeft,
   ArrowLeftRight,
   ArrowRight,
+  AlertTriangle,
   ZoomIn,
   ZoomOut,
   Maximize2,
@@ -24,6 +24,7 @@ import {
   Loader2,
   Target,
   GitBranch,
+  Flame,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +36,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { MarkdownNote } from '@/components/KnowledgeGraph/MarkdownNote';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/stores/appStore';
 import { estimateRetentionRate } from '@/lib/services/psCalculator';
@@ -78,6 +80,7 @@ interface ResizeState {
 
 type LayoutDirection = 'right' | 'left' | 'both' | 'down';
 type EdgeStyle = 'curve' | 'straight' | 'elbow';
+type FocusFilterMode = 'all' | 'weak' | 'frequent';
 
 const DEFAULT_MIND_CANVAS_SETTINGS: MindCanvasLocalSettings = {
   layoutDirection: 'right',
@@ -166,6 +169,7 @@ export function MindCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autoFitKeyRef = useRef('');
+  const focusFilterFitKeyRef = useRef('');
   const settingsReadyMapIdRef = useRef<string | null>(null);
   const lastSavedSettingsJsonRef = useRef('');
   const previousLayoutDirectionRef = useRef<LayoutDirection | null>(null);
@@ -185,6 +189,7 @@ export function MindCanvas({
   const [showNotebook, setShowNotebook] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExamPaper, setSelectedExamPaper] = useState('');
+  const [focusFilterMode, setFocusFilterMode] = useState<FocusFilterMode>('all');
   const [isLoading, setIsLoading] = useState(!initialNodes?.length);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
@@ -468,6 +473,64 @@ export function MindCanvas({
     };
   }, [knowledgeNodeById, practiceStatsByNodeId, questionCountByNodeId]);
 
+  const highFrequencyThreshold = useMemo(() => {
+    const counts = nodes
+      .map(node => questionCountByNodeId.get(getLegacyNodeId(node.id)) || 0)
+      .filter(count => count > 0)
+      .sort((a, b) => b - a);
+
+    if (!counts.length) return 0;
+
+    const topQuartileIndex = Math.max(0, Math.ceil(counts.length * 0.25) - 1);
+    const topQuartileCount = counts[topQuartileIndex] || counts[0];
+    return counts[0] >= 3 ? Math.max(3, topQuartileCount) : topQuartileCount;
+  }, [nodes, questionCountByNodeId]);
+
+  const weakNodeIds = useMemo(() => {
+    return new Set(nodes.filter(node => getMasteryView(node).status === 'weak').map(node => node.id));
+  }, [nodes, getMasteryView]);
+
+  const highFrequencyNodeIds = useMemo(() => {
+    if (highFrequencyThreshold <= 0) return new Set<string>();
+
+    return new Set(nodes.filter(node => (
+      (questionCountByNodeId.get(getLegacyNodeId(node.id)) || 0) >= highFrequencyThreshold
+    )).map(node => node.id));
+  }, [highFrequencyThreshold, nodes, questionCountByNodeId]);
+
+  const focusTargetIds = useMemo(() => {
+    if (focusFilterMode === 'weak') return weakNodeIds;
+    if (focusFilterMode === 'frequent') return highFrequencyNodeIds;
+    return new Set<string>();
+  }, [focusFilterMode, highFrequencyNodeIds, weakNodeIds]);
+
+  const focusVisibleNodeIds = useMemo(() => {
+    if (focusFilterMode === 'all') return null;
+
+    const ids = new Set<string>();
+    focusTargetIds.forEach(nodeId => {
+      let current = nodeById.get(nodeId);
+      while (current) {
+        ids.add(current.id);
+        current = current.parent_id ? nodeById.get(current.parent_id) : undefined;
+      }
+    });
+    return ids;
+  }, [focusFilterMode, focusTargetIds, nodeById]);
+
+  const focusFilterKey = useMemo(() => {
+    if (focusFilterMode === 'all') return 'all';
+    return `${focusFilterMode}:${Array.from(focusTargetIds).sort().join(',')}`;
+  }, [focusFilterMode, focusTargetIds]);
+
+  const isFocusFilterExpanded = useMemo(() => {
+    if (focusFilterMode === 'all' || !focusVisibleNodeIds?.size) return false;
+    return Array.from(focusVisibleNodeIds).every(nodeId => expandedNodes.has(nodeId));
+  }, [expandedNodes, focusFilterMode, focusVisibleNodeIds]);
+
+  const weakCount = weakNodeIds.size;
+  const highFrequencyCount = highFrequencyNodeIds.size;
+
   const expandPathToNode = useCallback((nodeId: string) => {
     const ids = new Set<string>();
     let current = nodeById.get(nodeId);
@@ -542,19 +605,25 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
 }, [showNotebook]);
 
   const visibleTreeData = useMemo((): TreeNode[] => {
-    const cloneToDepth = (treeNode: TreeNode, depth: number, maxDepth: number): TreeNode => {
+    const cloneToDepth = (treeNode: TreeNode, depth: number, maxDepth: number): TreeNode | null => {
+      if (focusVisibleNodeIds && !focusVisibleNodeIds.has(treeNode.node.id)) return null;
+
       const canShowChildren = depth < maxDepth && expandedNodes.has(treeNode.node.id);
 
       return {
         node: treeNode.node,
         children: canShowChildren
-          ? treeNode.children.map(child => cloneToDepth(child, depth + 1, maxDepth))
+          ? treeNode.children
+            .map(child => cloneToDepth(child, depth + 1, maxDepth))
+            .filter((child): child is TreeNode => child !== null)
           : [],
       };
     };
 
-    return treeData.map(root => cloneToDepth(root, 0, getVisibleDepthForScale(scale)));
-  }, [treeData, expandedNodes, scale]);
+    return treeData
+      .map(root => cloneToDepth(root, 0, getVisibleDepthForScale(scale)))
+      .filter((root): root is TreeNode => root !== null);
+  }, [treeData, expandedNodes, focusVisibleNodeIds, scale]);
 
   const visibleChildCountById = useMemo(() => {
     const counts = new Map<string, number>();
@@ -840,10 +909,12 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
   }, [calculateNodePositions]);
 
   const expandAll = useCallback(() => {
+    setFocusFilterMode('all');
     setExpandedNodes(new Set(nodes.map(node => node.id)));
   }, [nodes]);
 
   const collapseToRoots = useCallback(() => {
+    setFocusFilterMode('all');
     setExpandedNodes(new Set(nodes.filter(node => !node.parent_id).map(node => node.id)));
     setSelectedNode(null);
     setShowNotebook(false);
@@ -902,6 +973,35 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       return () => window.clearTimeout(timer);
     }
   }, [isLoading, nodes.length, mindMap?.id, handleFitView]);
+
+  useEffect(() => {
+    if (focusFilterMode === 'all') return;
+
+    if (!focusVisibleNodeIds?.size) {
+      setExpandedNodes(new Set(nodes.filter(node => !node.parent_id).map(node => node.id)));
+      setSelectedNode(null);
+      setShowNotebook(false);
+      return;
+    }
+
+    setExpandedNodes(new Set(focusVisibleNodeIds));
+    setSelectedNode(current => (current && focusVisibleNodeIds.has(current.id) ? current : null));
+    setShowNotebook(false);
+  }, [focusFilterMode, focusVisibleNodeIds, nodes]);
+
+  useEffect(() => {
+    if (focusFilterMode === 'all') {
+      focusFilterFitKeyRef.current = 'all';
+      return;
+    }
+    if (!focusVisibleNodeIds?.size) return;
+    if (!isFocusFilterExpanded) return;
+    if (focusFilterFitKeyRef.current === focusFilterKey) return;
+
+    focusFilterFitKeyRef.current = focusFilterKey;
+    const timer = window.setTimeout(handleFitView, 80);
+    return () => window.clearTimeout(timer);
+  }, [focusFilterKey, focusFilterMode, focusVisibleNodeIds?.size, handleFitView, isFocusFilterExpanded]);
 
   useEffect(() => {
     if (isLoading || nodes.length === 0) return;
@@ -1038,7 +1138,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
         ref={containerRef}
         className={cn(
           "relative h-full w-full overflow-hidden bg-slate-50 select-none shadow-inner dark:from-slate-900 dark:to-slate-800 md:rounded-xl md:border md:border-slate-200/60",
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          isDragging ? 'cursor-grabbing' : 'cursor-default'
         )}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
@@ -1047,15 +1147,15 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
         onMouseLeave={handleMouseUp}
       >
         <div className="pointer-events-none absolute left-2 right-2 top-2 z-30 flex items-start justify-between gap-3 md:left-4 md:right-4 md:top-4">
-          <div className="pointer-events-auto w-full rounded-xl border border-[#eee7ff] bg-white/92 p-2 shadow-[0_10px_28px_rgba(76,68,128,0.08)] backdrop-blur-md md:max-w-[34rem]">
-            <div className="grid grid-cols-[minmax(0,1fr)_8.75rem] gap-1.5 md:grid-cols-[minmax(190px,1fr)_minmax(150px,0.9fr)_auto_auto] md:items-center md:gap-1.5">
-              <div className="relative min-w-0 flex-1">
+          <div className="pointer-events-auto w-full rounded-lg border border-slate-200/80 bg-white/88 p-2 shadow-sm backdrop-blur-md md:max-w-[54rem]">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[14rem] flex-1">
                 <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8b84a6]" />
                 <Input
                   ref={searchInputRef}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-8 rounded-lg border-[#eee7ff] bg-[#fbfaff] pl-8 pr-9 text-xs shadow-none md:h-8 md:pr-10 md:text-sm"
+                  className="h-8 rounded-md border-slate-200 bg-slate-50/90 pl-8 pr-9 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-[#a49aff] md:text-sm"
                   placeholder="搜索知识点"
                 />
                 {searchQuery && (
@@ -1064,10 +1164,49 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   </span>
                 )}
               </div>
+              <div className="flex shrink-0 rounded-md border border-slate-200 bg-slate-50 p-0.5">
+                {([
+                  ['all', null, '全部', nodes.length],
+                  ['weak', AlertTriangle, '薄弱', weakCount],
+                  ['frequent', Flame, '高频', highFrequencyCount],
+                ] as const).map(([value, Icon, label, count]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={focusFilterMode === value}
+                    onClick={() => {
+                      if (value === 'all') {
+                        setFocusFilterMode('all');
+                        return;
+                      }
+                      setFocusFilterMode(current => current === value ? 'all' : value);
+                    }}
+                    className={cn(
+                      'flex h-7 items-center gap-1 rounded px-2 text-xs font-medium transition-colors',
+                      focusFilterMode === value
+                        ? value === 'weak'
+                          ? 'bg-red-50 text-red-700 shadow-sm ring-1 ring-red-200'
+                          : value === 'frequent'
+                            ? 'bg-amber-50 text-amber-700 shadow-sm ring-1 ring-amber-200'
+                            : 'bg-white text-[#5e5394] shadow-sm'
+                        : 'text-slate-500 hover:bg-white hover:text-slate-700'
+                    )}
+                  >
+                    {Icon && <Icon className="h-3.5 w-3.5" />}
+                    <span>{label}</span>
+                    <span className={cn(
+                      'rounded px-1 text-[10px]',
+                      focusFilterMode === value ? 'bg-white/80 text-current' : 'bg-white text-slate-400'
+                    )}>
+                      {count}
+                    </span>
+                  </button>
+                ))}
+              </div>
               <select
                 value={selectedExamPaper}
                 onChange={(event) => setSelectedExamPaper(event.target.value)}
-                className="h-8 min-w-0 rounded-lg border border-[#eee7ff] bg-[#fbfaff] px-2 text-xs text-[#5e5394] outline-none focus:border-[#a49aff] md:block"
+                className="h-8 min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50/90 px-2 text-xs text-slate-600 outline-none focus:border-[#a49aff] sm:max-w-[13rem]"
                 aria-label="按真题套卷高亮知识点"
               >
                 <option value="">全部知识点</option>
@@ -1075,14 +1214,15 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
-              <Button variant="outline" size="icon" className="hidden h-8 w-8 rounded-lg md:inline-flex" onClick={expandAll} aria-label="展开全部">
+              <Button variant="outline" size="icon" className="hidden h-8 w-8 rounded-md border-slate-200 bg-white text-slate-500 hover:text-[#5e5394] md:inline-flex" onClick={expandAll} aria-label="展开全部">
                 <ListTree className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="icon" className="hidden h-8 w-8 rounded-lg md:inline-flex" onClick={collapseToRoots} aria-label="收起到根层级">
+              <Button variant="outline" size="icon" className="hidden h-8 w-8 rounded-md border-slate-200 bg-white text-slate-500 hover:text-[#5e5394] md:inline-flex" onClick={collapseToRoots} aria-label="收起到根层级">
                 <Minimize2 className="h-4 w-4" />
               </Button>
             </div>
-            <div className="mt-1.5 hidden flex-wrap items-center gap-1 sm:flex">
+            <div className="mt-2 hidden flex-wrap items-center gap-2 sm:flex">
+              <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
               {([
                 ['right', ArrowRight, '向右展开'],
                 ['left', ArrowLeft, '向左展开'],
@@ -1095,7 +1235,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       type="button"
                       variant={layoutDirection === value ? 'default' : 'outline'}
                       size="icon"
-                      className="h-7 w-7 rounded-lg"
+                      className={cn(
+                        "h-7 w-7 rounded border-0 shadow-none",
+                        layoutDirection === value ? "bg-[#a49aff] text-white" : "bg-transparent text-slate-500 hover:bg-white"
+                      )}
                       onClick={() => setLayoutDirection(value)}
                       aria-label={label}
                     >
@@ -1105,9 +1248,9 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   <TooltipContent>{label}</TooltipContent>
                 </Tooltip>
               ))}
+              </div>
 
-              <span className="mx-1 h-5 w-px bg-[#eee7ff]" />
-
+              <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
               {([
                 ['curve', GitBranch, '曲线'],
                 ['straight', MinusIcon, '直线'],
@@ -1119,7 +1262,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       type="button"
                       variant={edgeStyle === value ? 'default' : 'outline'}
                       size="icon"
-                      className="h-7 w-7 rounded-lg"
+                      className={cn(
+                        "h-7 w-7 rounded border-0 shadow-none",
+                        edgeStyle === value ? "bg-[#a49aff] text-white" : "bg-transparent text-slate-500 hover:bg-white"
+                      )}
                       onClick={() => setEdgeStyle(value)}
                       aria-label={label}
                     >
@@ -1129,7 +1275,9 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   <TooltipContent>{label}</TooltipContent>
                 </Tooltip>
               ))}
+              </div>
 
+              <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
               {[2, 3, 4].map(width => (
                 <Tooltip key={width}>
                   <TooltipTrigger asChild>
@@ -1137,7 +1285,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       type="button"
                       variant={edgeWidth === width ? 'default' : 'outline'}
                       size="icon"
-                      className="h-7 w-7 rounded-lg"
+                      className={cn(
+                        "h-7 w-7 rounded border-0 shadow-none",
+                        edgeWidth === width ? "bg-[#a49aff] text-white" : "bg-transparent text-slate-500 hover:bg-white"
+                      )}
                       onClick={() => setEdgeWidth(width)}
                       aria-label={`${width}px`}
                     >
@@ -1147,25 +1298,28 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   <TooltipContent>{width}px</TooltipContent>
                 </Tooltip>
               ))}
+              </div>
 
+              <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
               {EDGE_COLORS.map(color => (
                 <Tooltip key={color}>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
                       className={cn(
-                        "h-7 w-7 rounded-lg border border-[#eee7ff] bg-white p-1",
-                        edgeColor === color && "ring-2 ring-[#a49aff] ring-offset-1"
+                        "h-7 w-7 rounded border border-transparent bg-transparent p-1 hover:bg-white",
+                        edgeColor === color && "bg-white ring-1 ring-[#a49aff]"
                       )}
                       onClick={() => setEdgeColor(color)}
                       aria-label={color}
                     >
-                      <span className="block h-full w-full rounded-sm" style={{ backgroundColor: color }} />
+                      <span className="block h-full w-full rounded" style={{ backgroundColor: color }} />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{color}</TooltipContent>
                 </Tooltip>
               ))}
+              </div>
             </div>
             {searchQuery && searchResults.length > 0 && (
               <div className="mt-1.5 flex gap-1 overflow-x-auto pb-0.5 md:mt-2 md:pb-1">
@@ -1254,17 +1408,31 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
               const legacyNodeId = getLegacyNodeId(node.id);
               const isExamPaperMode = !!selectedExamPaper;
               const examPaperMatched = highlightedNodeIdsByExamPaper.has(node.id) || highlightedNodeIdsByExamPaper.has(legacyNodeId);
-              const nodeBg = isExamPaperMode
+              const focusMatched = focusFilterMode !== 'all' && focusTargetIds.has(node.id);
+              const isFocusPathOnly = focusFilterMode !== 'all' && !focusMatched;
+              const nodeBg = isFocusPathOnly
+                ? '#FFFFFF'
+                : focusFilterMode === 'frequent' && focusMatched
+                  ? '#FFFBEB'
+                  : isExamPaperMode
                 ? examPaperMatched
                   ? '#FEF3C7'
                   : '#FFFFFF'
                 : c.bg;
-              const nodeHoverBg = isExamPaperMode
+              const nodeHoverBg = isFocusPathOnly
+                ? '#F8FAFC'
+                : focusFilterMode === 'frequent' && focusMatched
+                  ? '#FEF3C7'
+                  : isExamPaperMode
                 ? examPaperMatched
                   ? '#FDE68A'
                   : '#F8FAFC'
                 : c.hoverBg;
-              const nodeBorder = isExamPaperMode
+              const nodeBorder = isFocusPathOnly
+                ? '#CBD5E1'
+                : focusFilterMode === 'frequent' && focusMatched
+                  ? '#D97706'
+                  : isExamPaperMode
                 ? examPaperMatched
                   ? '#D97706'
                   : '#E2E8F0'
@@ -1275,10 +1443,14 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   key={node.id} 
                   className={cn(
                     "group absolute rounded-xl pointer-events-auto mindmap-node border border-slate-200/80 shadow-sm",
+                    "cursor-pointer",
                     selected && "ring-2 ring-blue-500 ring-offset-2",
                     searchMatched && !selected && "ring-2 ring-amber-400 ring-offset-1",
                     c.status === 'weak' && !selected && !isExamPaperMode && "ring-1 ring-red-200",
-                    examPaperMatched && !selected && "ring-2 ring-amber-300 ring-offset-1"
+                    examPaperMatched && !selected && "ring-2 ring-amber-300 ring-offset-1",
+                    focusFilterMode === 'weak' && focusMatched && !selected && "ring-2 ring-red-400 ring-offset-2",
+                    focusFilterMode === 'frequent' && focusMatched && !selected && "ring-2 ring-amber-400 ring-offset-2",
+                    isFocusPathOnly && "opacity-80"
                   )}
                   style={{ 
                     left: x, 
@@ -1296,7 +1468,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                     boxShadow: '0 12px 24px -10px rgba(0, 0, 0, 0.12)'
                   }}
                   transition={{ type: "spring", stiffness: 380, damping: 20 }}
-                  onClick={(e) => { e.stopPropagation(); handleNodeClick(node); }}
+                  onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleNodeClick(node); }}
                 >
                   <div className="h-full flex flex-col justify-start p-3 overflow-hidden select-none">
                     <div className="flex items-start gap-2 w-full">
@@ -1349,9 +1521,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                     {isShowDetail && node.markdown && !showNotebook && !isCompactMode && (
                       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-2 pl-6 overflow-hidden">
                         <div className="text-[11px] text-slate-400 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg p-2 max-h-12 overflow-hidden border border-slate-200/30">
-                          <ReactMarkdown>
-                            {node.markdown.substring(0, 60) + (node.markdown.length > 60 ? '...' : '')}
-                          </ReactMarkdown>
+                          {node.markdown.substring(0, 60) + (node.markdown.length > 60 ? '...' : '')}
                         </div>
                       </motion.div>
                     )}
@@ -1494,9 +1664,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                 </Button>
               </div>
               <ScrollArea className="flex-1 bg-white p-4 dark:bg-slate-900 sm:p-6">
-                <div className="prose prose-slate prose-sm max-w-none dark:prose-invert">
-                  <ReactMarkdown>{selectedNode.markdown}</ReactMarkdown>
-                </div>
+                <MarkdownNote className="dark:prose-invert">{selectedNode.markdown}</MarkdownNote>
               </ScrollArea>
               {selectedNode.content && (
                 <div className="border-t bg-slate-50/50 p-3 dark:bg-slate-800/30 sm:p-4">
@@ -1573,7 +1741,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   <div className="mb-4">
                     <h4 className="text-[11px] font-bold tracking-wide text-slate-400 uppercase mb-1.5">相关笔记</h4>
                     <div className="bg-amber-50/30 dark:bg-slate-800 border border-amber-100/50 p-3 rounded-xl text-xs text-slate-700 dark:text-slate-300">
-                      <ReactMarkdown>{selectedNode.markdown}</ReactMarkdown>
+                      <MarkdownNote>{selectedNode.markdown}</MarkdownNote>
                     </div>
                   </div>
                 )}

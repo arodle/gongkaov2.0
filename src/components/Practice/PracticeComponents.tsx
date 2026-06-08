@@ -5,6 +5,21 @@ import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { BehaviorEventRecord, BehaviorEventType, QuestionBankItem } from '@/types';
+import { normalizeBehaviorEvent } from '@/lib/behavior-events';
+import {
+  QUANTITY_STRATEGY_LABELS,
+  WRONG_REASON_LABELS,
+  advanceReviewMeta,
+  buildDailyTrainingPlan,
+  createDefaultReviewMeta,
+  getAverageAnswerTimeByType,
+  getQuestionTypeLabel,
+  recordReviewAttempt,
+  type DailyTrainingPlanSummary,
+  type QuantityStrategyTag,
+  type QuestionReviewMeta,
+  type WrongReasonTag,
+} from '@/lib/practice-insights';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -40,6 +55,30 @@ interface TextMark {
   start: number;
   end: number;
   text: string;
+}
+
+const REVIEW_META_STORAGE_KEY = 'gongkao:question-review-meta';
+
+function loadReviewMetaMap(): Record<string, QuestionReviewMeta> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(REVIEW_META_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReviewMetaMap(meta: Record<string, QuestionReviewMeta>) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(REVIEW_META_STORAGE_KEY, JSON.stringify(meta));
+}
+
+function formatDurationMs(ms?: number) {
+  if (!ms || !Number.isFinite(ms)) return '--';
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m${seconds % 60}s`;
 }
 
 function getSelectionInfo(container: HTMLElement | null): TextSelectionInfo | null {
@@ -106,7 +145,7 @@ function restoreQuestionBehaviorEvents(events: BehaviorEventRecord[], textLength
   let latestNote = '';
   let maxOrder = 0;
 
-  const sorted = [...events].sort((a, b) => {
+  const sorted = events.map(normalizeBehaviorEvent).sort((a, b) => {
     const orderA = typeof a.metadata?.order === 'number' ? a.metadata.order : 0;
     const orderB = typeof b.metadata?.order === 'number' ? b.metadata.order : 0;
     if (orderA !== orderB) return orderA - orderB;
@@ -587,9 +626,21 @@ export function QuestionCard({
 
 interface PracticeSelectorProps {
   onSelectMode: (mode: 'sequence' | 'random' | 'targeted' | 'exam') => void;
+  onSelectExamPaper?: (paperName: string) => void;
+  onStartDailyPlan?: () => void;
+  examPapers?: Array<{ name: string; questionCount: number }>;
+  dailyPlanCount?: number;
+  dailyPlanSummary?: DailyTrainingPlanSummary;
 }
 
-export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
+export function PracticeSelector({
+  onSelectMode,
+  onSelectExamPaper,
+  onStartDailyPlan,
+  examPapers = [],
+  dailyPlanCount = 0,
+  dailyPlanSummary,
+}: PracticeSelectorProps) {
   const { nodes, getWeakNodes } = useAppStore();
   const weakNodes = getWeakNodes();
 
@@ -635,40 +686,105 @@ export function PracticeSelector({ onSelectMode }: PracticeSelectorProps) {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-      {modeCards.map((card) => {
-        const Icon = card.icon;
-        return (
-          <motion.div
-            key={card.mode}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="w-full"
-          >
-            <Card
-              className="h-full cursor-pointer border-white/70 bg-white/86 shadow-[0_16px_40px_rgba(31,80,96,0.06)] transition-colors hover:border-primary/35 hover:bg-white"
-              onClick={() => onSelectMode(card.mode)}
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {modeCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <motion.div
+              key={card.mode}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="w-full"
             >
-              <CardContent className="p-3 sm:p-4 md:p-6">
-                <div className="flex items-start gap-2 sm:gap-3">
-                  <div className={`p-2 rounded-lg ${card.bgColor}`}>
-                    <Icon className={`h-5 w-5 ${card.iconColor}`} />
+              <Card
+                className="h-full cursor-pointer border-white/70 bg-white/86 shadow-[0_16px_40px_rgba(31,80,96,0.06)] transition-colors hover:border-primary/35 hover:bg-white"
+                onClick={() => onSelectMode(card.mode)}
+              >
+                <CardContent className="p-3 sm:p-4 md:p-6">
+                  <div className="flex items-start gap-2 sm:gap-3">
+                    <div className={`p-2 rounded-lg ${card.bgColor}`}>
+                      <Icon className={`h-5 w-5 ${card.iconColor}`} />
+                    </div>
+                    <div className="space-y-1 sm:space-y-2 flex-1 min-w-0">
+                      <h3 className="font-semibold text-sm sm:text-base md:text-lg">{card.title}</h3>
+                      <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
+                        {card.description}
+                      </p>
+                      <Badge variant={card.badgeVariant || 'secondary'} className="text-[10px] sm:text-xs">
+                        {card.badge}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="space-y-1 sm:space-y-2 flex-1 min-w-0">
-                    <h3 className="font-semibold text-sm sm:text-base md:text-lg">{card.title}</h3>
-                    <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
-                      {card.description}
-                    </p>
-                    <Badge variant={card.badgeVariant || 'secondary'} className="text-[10px] sm:text-xs">
-                      {card.badge}
-                    </Badge>
+                </CardContent>
+              </Card>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+        <Card className="border-cyan-100 bg-cyan-50/60">
+          <CardContent className="flex flex-col gap-3 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-cyan-950">每日训练计划</div>
+                <p className="mt-1 text-xs leading-5 text-cyan-800">
+                  自动混合到期二刷、错题和未练题，建议每天完成 10-20 题。
+                </p>
+              </div>
+              <Badge variant="outline" className="bg-white text-cyan-700">{dailyPlanCount} 题</Badge>
+            </div>
+            {dailyPlanSummary && dailyPlanSummary.total > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  ['到期二刷', dailyPlanSummary.dueReview],
+                  ['错题回炉', dailyPlanSummary.wrongReview],
+                  ['未练新题', dailyPlanSummary.fresh],
+                ].map(([label, count]) => (
+                  <div key={label} className="rounded-md border border-cyan-100 bg-white px-2 py-1.5 text-center">
+                    <div className="text-[11px] text-cyan-800">{label}</div>
+                    <div className="mt-0.5 text-sm font-semibold text-cyan-950">{count}</div>
                   </div>
+                ))}
+              </div>
+            )}
+            <Button type="button" size="sm" onClick={onStartDailyPlan} disabled={!onStartDailyPlan || dailyPlanCount === 0}>
+              开始今日计划
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-violet-100 bg-white">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-slate-950">选择套卷完整作答</div>
+                <p className="mt-1 text-xs text-muted-foreground">按同一套真题完整进入整卷提交模式。</p>
+              </div>
+              <Badge variant="outline">{examPapers.length} 套</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {examPapers.slice(0, 6).map(paper => (
+                <button
+                  key={paper.name}
+                  type="button"
+                  className="rounded-lg border bg-slate-50 p-3 text-left transition hover:border-violet-200 hover:bg-violet-50"
+                  onClick={() => onSelectExamPaper?.(paper.name)}
+                >
+                  <div className="line-clamp-1 text-sm font-medium">{paper.name}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{paper.questionCount} 题 · 整卷提交</div>
+                </button>
+              ))}
+              {examPapers.length === 0 && (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground sm:col-span-2">
+                  暂无已归类套卷，先在题库管理中给题目绑定套卷。
                 </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        );
-      })}
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -677,6 +793,7 @@ interface PracticeSessionProps {
   questions: QuestionBankItem[];
   mode: 'sequence' | 'random' | 'targeted' | 'exam';
   answerMode?: 'instant' | 'batch';
+  sessionTitle?: string;
   onComplete: (results: { correct: number; wrong: number; details: PracticeAnswerResult[] }) => void;
   onExit: () => void;
 }
@@ -687,17 +804,21 @@ interface PracticeAnswerResult {
   isCorrect: boolean;
   answerTime: number;
   timestamp: number;
+  averageTime?: number;
 }
 
-export function PracticeSession({ questions, mode, answerMode = 'instant', onComplete, onExit }: PracticeSessionProps) {
+export function PracticeSession({ questions, mode, answerMode = 'instant', sessionTitle, onComplete, onExit }: PracticeSessionProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<PracticeAnswerResult[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [userAnswers, setUserAnswers] = useState<{ [key: number]: string }>({});
   const [isRunning, setIsRunning] = useState(true);
-  const { updateNodePSScore, addAnswer } = useAppStore();
+  const { updateNodePSScore, addAnswer, practiceRecords, questionBank } = useAppStore();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const averageTimeByType = useMemo(() => (
+    getAverageAnswerTimeByType(questionBank, practiceRecords)
+  ), [practiceRecords, questionBank]);
 
   useEffect(() => {
     if (!isRunning || questions.length === 0) {
@@ -735,6 +856,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
       isCorrect,
       answerTime,
       timestamp: Date.now(),
+      averageTime: averageTimeByType.get(getQuestionTypeLabel(currentQuestion)),
     };
 
     setAnswers(prev => [...prev, answer]);
@@ -752,7 +874,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
     if (currentQuestion.linkedAngleId) {
       await updateNodePSScore(currentQuestion.linkedAngleId, isCorrect);
     }
-  }, [currentQuestion, currentIndex, mode, addAnswer, updateNodePSScore]);
+  }, [averageTimeByType, currentQuestion, currentIndex, mode, addAnswer, updateNodePSScore]);
 
   const handleSelectAnswer = useCallback((selectedAnswer: string) => {
     setUserAnswers(prev => ({ ...prev, [currentIndex]: selectedAnswer }));
@@ -779,6 +901,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
           ? elapsedTime / questions.length * 1000
           : answers.find(answer => answer.question.id === q.id)?.answerTime || 0,
         timestamp: Date.now(),
+        averageTime: averageTimeByType.get(getQuestionTypeLabel(q)),
       };
     });
 
@@ -813,7 +936,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
         details: allAnswers,
       });
     }
-  }, [answerMode, questions, userAnswers, elapsedTime, updateNodePSScore, addAnswer, mode, answers, onComplete]);
+  }, [answerMode, questions, userAnswers, elapsedTime, averageTimeByType, updateNodePSScore, addAnswer, mode, answers, onComplete]);
 
   const handleExitConfirm = useCallback(() => {
     setIsRunning(false);
@@ -871,6 +994,14 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', onCom
   return (
     <div className="px-3 sm:px-4">
       <div className="mb-4">
+        {sessionTitle && (
+          <div className="mb-3 rounded-lg border bg-white/80 p-3">
+            <div className="text-sm font-semibold">{sessionTitle}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {mode === 'exam' ? '套卷完整作答 · 整卷提交后统一看结果' : '训练会话'}
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-2 mb-2">
           <span className="text-xs text-muted-foreground flex-shrink-0">题目进度</span>
           <div className="flex-1 flex question-progress-scroll gap-1 pb-2">
@@ -921,6 +1052,54 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: PracticeA
   const accuracy = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
   const [filter, setFilter] = useState<'all' | 'wrong'>('all');
   const [selectedQuestion, setSelectedQuestion] = useState<number | null>(null);
+  const [reviewMetaByQuestion, setReviewMetaByQuestion] = useState<Record<string, QuestionReviewMeta>>(() => loadReviewMetaMap());
+
+  const updateReviewMeta = useCallback((questionId: string, updater: (meta: QuestionReviewMeta) => QuestionReviewMeta) => {
+    setReviewMetaByQuestion(prev => {
+      const base = prev[questionId] || createDefaultReviewMeta();
+      const next = { ...prev, [questionId]: updater(base) };
+      saveReviewMetaMap(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    setReviewMetaByQuestion(prev => {
+      let changed = false;
+      const next = { ...prev };
+      results.forEach(result => {
+        const existing = next[result.question.id];
+        if (result.isCorrect && !existing) return;
+        const updated = recordReviewAttempt(existing, result.isCorrect);
+        if (JSON.stringify(existing) !== JSON.stringify(updated)) {
+          next[result.question.id] = updated;
+          changed = true;
+        }
+      });
+      if (changed) saveReviewMetaMap(next);
+      return changed ? next : prev;
+    });
+  }, [results]);
+
+  const reviewProgress = useMemo(() => {
+    return results.reduce(
+      (summary, result) => {
+        const meta = reviewMetaByQuestion[result.question.id];
+        if (!meta) return summary;
+        if (!result.isCorrect) {
+          return { ...summary, rescheduled: summary.rescheduled + 1 };
+        }
+        if (meta.mastered) {
+          return { ...summary, mastered: summary.mastered + 1 };
+        }
+        if (meta.reviewStage > 0) {
+          return { ...summary, advanced: summary.advanced + 1 };
+        }
+        return summary;
+      },
+      { advanced: 0, mastered: 0, rescheduled: 0 }
+    );
+  }, [results, reviewMetaByQuestion]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -954,6 +1133,23 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: PracticeA
           </div>
 
           <Progress value={accuracy} className="h-2 sm:h-3" />
+
+          {(reviewProgress.advanced > 0 || reviewProgress.mastered > 0 || reviewProgress.rescheduled > 0) && (
+            <div className="grid gap-2 rounded-lg border bg-slate-50 p-3 text-left sm:grid-cols-3">
+              <div className="rounded-md bg-white px-3 py-2">
+                <div className="text-xs text-muted-foreground">二刷推进</div>
+                <div className="mt-1 text-lg font-semibold text-cyan-700">{reviewProgress.advanced}</div>
+              </div>
+              <div className="rounded-md bg-white px-3 py-2">
+                <div className="text-xs text-muted-foreground">新掌握</div>
+                <div className="mt-1 text-lg font-semibold text-emerald-700">{reviewProgress.mastered}</div>
+              </div>
+              <div className="rounded-md bg-white px-3 py-2">
+                <div className="text-xs text-muted-foreground">重排二刷</div>
+                <div className="mt-1 text-lg font-semibold text-amber-700">{reviewProgress.rescheduled}</div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1080,6 +1276,99 @@ function PracticeComplete({ results, onExit, elapsedTime }: { results: PracticeA
                     <p className="text-sm">{results[selectedQuestion].question?.explanation}</p>
                   </div>
                 )}
+
+                <div className="grid gap-3 rounded-lg border bg-slate-50 p-3 text-sm md:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground">耗时对比</div>
+                    <div className="mt-1 font-semibold">
+                      本题 {formatDurationMs(results[selectedQuestion].answerTime)}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        同类均值 {formatDurationMs(results[selectedQuestion].averageTime)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      分类：{getQuestionTypeLabel(results[selectedQuestion].question)}
+                    </div>
+                  </div>
+
+                  {!results[selectedQuestion].isCorrect && (
+                    <div className="space-y-2">
+                      <div className="text-xs font-medium text-muted-foreground">错因标签</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(Object.keys(WRONG_REASON_LABELS) as WrongReasonTag[]).map(tag => {
+                          const questionId = results[selectedQuestion].question.id;
+                          const active = reviewMetaByQuestion[questionId]?.reasonTags.includes(tag);
+                          return (
+                            <Button
+                              key={tag}
+                              type="button"
+                              size="sm"
+                              variant={active ? 'default' : 'outline'}
+                              className="h-7 px-2 text-xs"
+                              onClick={() => updateReviewMeta(questionId, meta => ({
+                                ...meta,
+                                reasonTags: active
+                                  ? meta.reasonTags.filter(item => item !== tag)
+                                  : [...meta.reasonTags, tag],
+                                updatedAt: new Date().toISOString(),
+                              }))}
+                            >
+                              {WRONG_REASON_LABELS[tag]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {getQuestionTypeLabel(results[selectedQuestion].question).includes('数量') && (
+                    <div className="space-y-2 md:col-span-2">
+                      <div className="text-xs font-medium text-muted-foreground">数量关系策略</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(Object.keys(QUANTITY_STRATEGY_LABELS) as QuantityStrategyTag[]).map(tag => {
+                          const questionId = results[selectedQuestion].question.id;
+                          const active = reviewMetaByQuestion[questionId]?.strategyTags.includes(tag);
+                          return (
+                            <Button
+                              key={tag}
+                              type="button"
+                              size="sm"
+                              variant={active ? 'default' : 'outline'}
+                              className="h-7 px-2 text-xs"
+                              onClick={() => updateReviewMeta(questionId, meta => ({
+                                ...meta,
+                                strategyTags: active
+                                  ? meta.strategyTags.filter(item => item !== tag)
+                                  : [...meta.strategyTags, tag],
+                                updatedAt: new Date().toISOString(),
+                              }))}
+                            >
+                              {QUANTITY_STRATEGY_LABELS[tag]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {!results[selectedQuestion].isCorrect && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 md:col-span-2">
+                      <div className="text-xs text-muted-foreground">
+                        下次二刷：{reviewMetaByQuestion[results[selectedQuestion].question.id]?.nextReviewAt
+                          ? new Date(reviewMetaByQuestion[results[selectedQuestion].question.id].nextReviewAt!).toLocaleDateString()
+                          : '待安排'}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => updateReviewMeta(results[selectedQuestion].question.id, meta => advanceReviewMeta(meta))}
+                      >
+                        推进二刷间隔
+                      </Button>
+                    </div>
+                  )}
+                </div>
 
                 {(results[selectedQuestion]?.question?.images?.length || 0) > 0 && (
                   <div className="space-y-2">

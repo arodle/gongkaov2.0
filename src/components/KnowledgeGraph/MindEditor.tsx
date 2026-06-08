@@ -1,7 +1,6 @@
 ﻿﻿'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
 import {
   Bold,
   ChevronDown,
@@ -13,17 +12,23 @@ import {
   FileText,
   GripVertical,
   Heading2,
+  Highlighter,
+  ImagePlus,
   HelpCircle,
   Italic,
   List,
   Loader2,
+  Monitor,
   Plus,
   Quote,
   Save,
+  Sigma,
   Trash2,
+  Underline,
   X,
 } from 'lucide-react';
 import { MindCanvas } from '@/components/KnowledgeGraph/MindCanvas';
+import { MarkdownNote } from '@/components/KnowledgeGraph/MarkdownNote';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -34,6 +39,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
+import { saveRecentDeletion } from '@/lib/recent-deletions';
+import { useAppStore } from '@/lib/stores/appStore';
 import { cn } from '@/lib/utils';
 import type { MapEdgeRecord, MapNodeRecord, MindMapRecord } from '@/types';
 
@@ -134,6 +141,7 @@ function createNodeRecord(mindMapId: string, parentId: string | null, name: stri
 }
 
 export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges: initialEdges, onSave, onTargetedPractice }: MindEditorProps) {
+  const practiceRecords = useAppStore(state => state.practiceRecords);
   const [mindMap, setMindMap] = useState<MindMapRecord | null>(initialMindMap || null);
   const [nodes, setNodes] = useState<MapNodeRecord[]>(initialNodes || []);
   const [edges, setEdges] = useState<MapEdgeRecord[]>(initialEdges || []);
@@ -152,6 +160,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [isTextEditorCollapsed, setIsTextEditorCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
   const markdownTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialMindMap) setMindMap(initialMindMap);
@@ -275,6 +284,46 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     });
   }, [selectedNode, updateSelectedNode]);
 
+  const insertMarkdownAtCursor = useCallback((text: string) => {
+    if (!selectedNode) return;
+
+    const textarea = markdownTextareaRef.current;
+    const current = selectedNode.markdown || '';
+    const start = textarea?.selectionStart ?? current.length;
+    const end = textarea?.selectionEnd ?? current.length;
+    const nextText = `${current.slice(0, start)}${text}${current.slice(end)}`;
+
+    updateSelectedNode({ markdown: nextText });
+    setTextEditorMode('write');
+
+    window.requestAnimationFrame(() => {
+      const cursor = start + text.length;
+      markdownTextareaRef.current?.focus();
+      markdownTextareaRef.current?.setSelectionRange(cursor, cursor);
+    });
+  }, [selectedNode, updateSelectedNode]);
+
+  const insertImageFiles = useCallback(async (files: FileList | File[]) => {
+    if (!selectedNode) return;
+
+    const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+    if (!imageFiles.length) return;
+    const oversizedFiles = imageFiles.filter(file => file.size > 2 * 1024 * 1024);
+    if (oversizedFiles.length > 0) {
+      window.alert('截图过大，请先压缩到 2MB 以内再插入。');
+      return;
+    }
+
+    const snippets = await Promise.all(imageFiles.map(file => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(`\n\n![${file.name || '截图'}](${reader.result})\n\n`);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    })));
+
+    insertMarkdownAtCursor(snippets.join(''));
+  }, [insertMarkdownAtCursor, selectedNode]);
+
   const addNode = useCallback((parentId: string | null) => {
     if (!mindMap) return;
 
@@ -320,8 +369,30 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     if (!node) return;
 
     const ids = collectNodeAndDescendants(nodes, nodeId);
-    const confirmed = window.confirm(`删除「${node.name}」及其 ${ids.size - 1} 个子节点？`);
+    const legacyIds = new Set(Array.from(ids).map(id => id.startsWith('mn_') ? id.slice(3) : id));
+    const relatedPracticeCount = practiceRecords.filter(record => (
+      record.source_node_ids.some(id => ids.has(id) || legacyIds.has(id))
+    )).length;
+    const confirmed = window.confirm([
+      `删除「${node.name}」及其 ${ids.size - 1} 个子节点？`,
+      `关联练习/错题记录：${relatedPracticeCount} 条`,
+      '',
+      '删除后报告、错题本和靶向练习可能出现引用缺口。确认继续？',
+    ].join('\n'));
     if (!confirmed) return;
+
+    const deletedNodes = nodes.filter(item => ids.has(item.id));
+    const deletedEdges = edges.filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id));
+    saveRecentDeletion({
+      kind: 'mindmap-nodes',
+      title: node.name,
+      summary: `${deletedNodes.length} 个节点，${deletedEdges.length} 条连线`,
+      payload: {
+        mindMapId: mindMap?.id,
+        nodes: deletedNodes,
+        edges: deletedEdges,
+      },
+    });
 
     setNodes(prev => {
       const nextNodes = prev.filter(item => !ids.has(item.id));
@@ -345,7 +416,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     }
     setEditingNodeId(null);
     setHasChanges(true);
-  }, [edges, mindMap, nodes, selectedNodeId]);
+  }, [edges, mindMap, nodes, practiceRecords, selectedNodeId]);
 
   const handleCanvasNodesChange = useCallback((nextNodes: MapNodeRecord[]) => {
     setNodes(prev => {
@@ -540,6 +611,12 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         </Button>
       </div>
+      <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 md:hidden">
+        <div className="flex items-start gap-2">
+          <Monitor className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Mind 编辑属于运营功能，新增节点、批量改结构和长笔记维护建议在桌面端操作。</span>
+        </div>
+      </div>
 
       <aside className={cn(
         "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 md:flex md:w-[360px] md:border-r md:border-slate-200",
@@ -663,8 +740,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </label>
 
                 <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                  <div className="flex items-center justify-between border-b border-slate-200 bg-white px-2 py-1.5">
-                    <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center justify-between gap-1 border-b border-slate-200 bg-white px-2 py-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
                       <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('## ', '', '小标题')} aria-label="标题">
                         <Heading2 className="h-3.5 w-3.5" />
                       </Button>
@@ -673,6 +750,12 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                       </Button>
                       <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('*', '*')} aria-label="斜体">
                         <Italic className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('<mark>', '</mark>')} aria-label="高亮">
+                        <Highlighter className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('<u>', '</u>')} aria-label="下划线">
+                        <Underline className="h-3.5 w-3.5" />
                       </Button>
                       <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('- ', '', '列表项')} aria-label="列表">
                         <List className="h-3.5 w-3.5" />
@@ -683,6 +766,26 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                       <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('`', '`', '代码')} aria-label="代码">
                         <Code2 className="h-3.5 w-3.5" />
                       </Button>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('$', '$', 'a=b+c')} aria-label="行内公式">
+                        <Sigma className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('\n$$\n', '\n$$\n', '增长率=\\frac{现期量-基期量}{基期量}')} aria-label="块级公式">
+                        <span className="text-[11px] font-semibold leading-none">$$</span>
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => imageInputRef.current?.click()} aria-label="插入截图">
+                        <ImagePlus className="h-3.5 w-3.5" />
+                      </Button>
+                      <input
+                        ref={imageInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => {
+                          if (event.target.files) void insertImageFiles(event.target.files);
+                          event.target.value = '';
+                        }}
+                      />
                     </div>
                     <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
                       <Button
@@ -713,15 +816,19 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                       ref={markdownTextareaRef}
                       value={selectedNode.markdown || ''}
                       onChange={(event) => updateSelectedNode({ markdown: event.target.value })}
+                      onPaste={(event) => {
+                        const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
+                        if (!files.length) return;
+                        event.preventDefault();
+                        void insertImageFiles(files);
+                      }}
                       className="min-h-48 resize-y rounded-none border-0 bg-white font-mono text-xs shadow-none focus-visible:ring-0"
-                      placeholder="在这里写正文、知识点解释、例题方法、运营备注。支持 Markdown。"
+                      placeholder="在这里写正文、知识点解释、例题方法、运营备注。支持 Markdown、$公式$、高亮、下划线和截图。"
                     />
                   ) : (
                     <div className="min-h-48 bg-white p-3 text-sm">
                       {selectedNode.markdown ? (
-                        <div className="prose prose-slate prose-sm max-w-none">
-                          <ReactMarkdown>{selectedNode.markdown}</ReactMarkdown>
-                        </div>
+                        <MarkdownNote>{selectedNode.markdown}</MarkdownNote>
                       ) : (
                         <div className="text-sm text-slate-400">暂无正文内容</div>
                       )}

@@ -79,6 +79,22 @@ export async function initTables() {
   await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'real'`;
   await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS reference TEXT`;
   await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS exam_paper TEXT`;
+  await sql`ALTER TABLE question_bank ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS exam_papers (
+      id VARCHAR(255) PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      name TEXT NOT NULL,
+      normalized_name TEXT NOT NULL,
+      description TEXT,
+      type VARCHAR(50) DEFAULT 'real',
+      question_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, normalized_name)
+    );
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS answer_records (
@@ -127,6 +143,9 @@ export async function initTables() {
   await sql`CREATE INDEX IF NOT EXISTS idx_map_edge_user_id ON map_edge(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_map_edge_mind_map_id ON map_edge(mind_map_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_question_bank_user_id ON question_bank(user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_question_bank_deleted_at ON question_bank(user_id, deleted_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_exam_papers_user_id ON exam_papers(user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_exam_papers_normalized_name ON exam_papers(user_id, normalized_name)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_answer_records_user_id ON answer_records(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_practice_sets_user_id ON practice_sets(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_behavior_events_user_id ON behavior_events(user_id)`;

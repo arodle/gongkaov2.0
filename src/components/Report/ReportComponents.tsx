@@ -18,7 +18,8 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { getPSColor } from '@/lib/utils/colors';
-import { LocateFixed, Pause, Play, RotateCcw } from 'lucide-react';
+import { normalizeBehaviorEvent } from '@/lib/behavior-events';
+import { Info, LocateFixed, Pause, Play, RotateCcw } from 'lucide-react';
 
 export function RadarChart() {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -537,9 +538,11 @@ function PracticeReplayRecords() {
   const replayTimeline = useMemo<ReplayTimelineItem[]>(() => {
     if (!selectedItem) return [];
 
-    const events = behaviorEvents.filter(event => (
-      event.questionId === selectedItem.question.id && replayEventTypes.has(event.eventType)
-    ));
+    const events = behaviorEvents
+      .filter(event => (
+        event.questionId === selectedItem.question.id && replayEventTypes.has(event.eventType)
+      ))
+      .map(normalizeBehaviorEvent);
     const baseTime = events.reduce((min, event) => {
       const time = new Date(event.startTime).getTime();
       return Number.isFinite(time) ? Math.min(min, time) : min;
@@ -839,6 +842,22 @@ export function ReportDashboard() {
 
       <ScrollArea className="min-h-0 flex-1 overflow-y-auto">
         <div className="space-y-4 p-3 pt-2 sm:space-y-6 sm:p-6 sm:pt-2">
+          <Card className="border-blue-100 bg-blue-50/50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex items-start gap-3">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                <div className="min-w-0 space-y-2">
+                  <div className="text-sm font-semibold text-slate-900">指标口径说明</div>
+                  <div className="grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-2">
+                    <p><span className="font-medium text-slate-800">PS：</span>知识点掌握度分数，练习正确会提升，错误会下降，并会按最近练习时间叠加遗忘衰减。</p>
+                    <p><span className="font-medium text-slate-800">薄弱点：</span>PS 低于阈值、最近答错、存在错题，或有题但从未练习的节点会被标记为需加强。</p>
+                    <p><span className="font-medium text-slate-800">雷达图：</span>按一级能力模块聚合子节点 PS，展示当前能力结构，不等同于真实考试分数。</p>
+                    <p><span className="font-medium text-slate-800">行为回放：</span>仅回放做题中的高亮、划掉、选项变化和备注等结构化事件，不保存截图。</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
           <Tabs defaultValue="radar" className="space-y-4 sm:space-y-6">
             <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
               <TabsTrigger value="radar" className="h-8 flex-1 text-xs sm:text-sm">能力雷达</TabsTrigger>
