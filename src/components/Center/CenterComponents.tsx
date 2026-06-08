@@ -440,7 +440,7 @@ export function RecentDeletionPanel() {
         const sortedNodes = [...item.payload.nodes].sort((a, b) => (
           (a.parent_id ? 1 : 0) - (b.parent_id ? 1 : 0)
         ));
-        const restoredIdByOldId = new Map<string, string>();
+        const restoredIdByOldId = new Map<string, string>() as Map<string, string>;
 
         for (const node of sortedNodes) {
           const parentId = node.parent_id ? restoredIdByOldId.get(node.parent_id) || null : null;
