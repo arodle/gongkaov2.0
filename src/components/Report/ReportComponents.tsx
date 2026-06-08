@@ -4,8 +4,8 @@ import React, { useMemo, useRef, useEffect, useState } from 'react';
 import * as echarts from 'echarts';
 import type { ECharts } from 'echarts';
 import { useAppStore } from '@/lib/stores/appStore';
-import type { BehaviorEventRecord, PracticeRecord, QuestionBankItem } from '@/types';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import type { BehaviorEventRecord, PracticeRecord, QuestionBankItem, KnowledgeNodeRecord } from '@/types';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,7 +19,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { getPSColor } from '@/lib/utils/colors';
 import { normalizeBehaviorEvent } from '@/lib/behavior-events';
-import { Info, LocateFixed, Pause, Play, RotateCcw } from 'lucide-react';
+import { Info, LocateFixed, Pause, Play, RotateCcw, TrendingUp, Target, Clock, CheckCircle2, AlertCircle, BookOpen, Award, Zap } from 'lucide-react';
 
 export function RadarChart() {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -806,6 +806,317 @@ function PracticeReplayRecords() {
   );
 }
 
+interface ReviewStats {
+  totalPractices: number;
+  correctRate: number;
+  avgAnswerTime: number;
+  totalQuestions: number;
+  masteredCount: number;
+  weakCount: number;
+  recentActivity: { date: string; count: number }[];
+  categoryStats: { name: string; correct: number; total: number; avgPS: number }[];
+}
+
+function calculateReviewStats(
+  practiceRecords: PracticeRecord[],
+  nodes: KnowledgeNodeRecord[],
+  questionBank: QuestionBankItem[]
+): ReviewStats {
+  const totalPractices = practiceRecords.length;
+  const correctCount = practiceRecords.filter(r => r.is_correct).length;
+  const correctRate = totalPractices > 0 ? Math.round((correctCount / totalPractices) * 100) : 0;
+  const avgAnswerTime = totalPractices > 0
+    ? Math.round(practiceRecords.reduce((sum, r) => sum + r.answer_time, 0) / totalPractices / 1000)
+    : 0;
+
+  const totalQuestions = questionBank.length;
+  const masteredCount = nodes.filter(n => n.ps_score >= 120).length;
+  const weakCount = nodes.filter(n => n.ps_score < 80).length;
+
+  const activityByDate = new Map<string, number>();
+  const last7Days = Array.from({ length: 7 }, (_, i) => {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    return date.toISOString().split('T')[0];
+  }).reverse();
+  
+  last7Days.forEach(date => activityByDate.set(date, 0));
+  
+  practiceRecords.forEach(record => {
+    const date = record.updated_at.split('T')[0];
+    if (activityByDate.has(date)) {
+      activityByDate.set(date, (activityByDate.get(date) || 0) + 1);
+    }
+  });
+
+  const recentActivity = last7Days.map(date => ({
+    date,
+    count: activityByDate.get(date) || 0,
+  }));
+
+  const categories = [
+    { name: '言语理解', ids: ['k_1'] },
+    { name: '数量关系', ids: ['k_2'] },
+    { name: '判断推理', ids: ['k_3'] },
+    { name: '资料分析', ids: ['k_4'] },
+    { name: '常识判断', ids: ['k_5'] },
+  ];
+
+  const categoryStats = categories.map(cat => {
+    const categoryNodes = nodes.filter(n =>
+      cat.ids.some(id => n.id === id || n.parent_id === id)
+    );
+    const categoryQuestions = questionBank.filter(q =>
+      cat.ids.some(id => q.linkedAngleId === id || 
+        (q.knowledgePath?.includes(cat.name) || q.linkedAngleName === cat.name))
+    );
+    
+    const categoryRecords = practiceRecords.filter(r =>
+      r.source_node_ids.some(nid => categoryNodes.some(n => n.id === nid))
+    );
+
+    const correct = categoryRecords.filter(r => r.is_correct).length;
+    const total = categoryRecords.length;
+    const avgPS = categoryNodes.length > 0
+      ? Math.round(categoryNodes.reduce((sum, n) => sum + n.ps_score, 0) / categoryNodes.length)
+      : 50;
+
+    return { name: cat.name, correct, total, avgPS };
+  });
+
+  return {
+    totalPractices,
+    correctRate,
+    avgAnswerTime,
+    totalQuestions,
+    masteredCount,
+    weakCount,
+    recentActivity,
+    categoryStats,
+  };
+}
+
+export function StatsCard({ icon: Icon, label, value, trend, color }: {
+  icon: React.ElementType;
+  label: string;
+  value: string | number;
+  trend?: { value: number; isUp: boolean };
+  color: string;
+}) {
+  return (
+    <Card className="border-slate-200/50 bg-white">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between">
+          <div className={`p-2 rounded-lg ${color}`}>
+            <Icon className="h-4 w-4 text-white" />
+          </div>
+          {trend && (
+            <div className={`text-xs font-medium ${trend.isUp ? 'text-green-600' : 'text-red-600'}`}>
+              {trend.isUp ? '+' : ''}{trend.value}%
+            </div>
+          )}
+        </div>
+        <div className="mt-3">
+          <div className="text-xl font-bold text-slate-900">{value}</div>
+          <div className="text-xs text-muted-foreground">{label}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ReviewSummaryCard() {
+  const { practiceRecords, nodes, questionBank } = useAppStore();
+  const stats = useMemo(() => calculateReviewStats(practiceRecords, nodes, questionBank), [practiceRecords, nodes, questionBank]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <BookOpen className="h-5 w-5 text-blue-600" />
+          <span>学习概览</span>
+        </CardTitle>
+        <CardDescription className="text-xs">最近学习数据统计</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatsCard
+            icon={Target}
+            label="总练习次数"
+            value={stats.totalPractices}
+            color="bg-blue-500"
+          />
+          <StatsCard
+            icon={CheckCircle2}
+            label="正确率"
+            value={`${stats.correctRate}%`}
+            color="bg-green-500"
+          />
+          <StatsCard
+            icon={Clock}
+            label="平均用时"
+            value={`${stats.avgAnswerTime}s`}
+            color="bg-orange-500"
+          />
+          <StatsCard
+            icon={AlertCircle}
+            label="薄弱点"
+            value={stats.weakCount}
+            color="bg-red-500"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function WeeklyActivityCard() {
+  const { practiceRecords } = useAppStore();
+  const activity = useMemo(() => {
+    const activityByDate = new Map<string, number>();
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      return date.toISOString().split('T')[0];
+    }).reverse();
+
+    last7Days.forEach(date => activityByDate.set(date, 0));
+
+    practiceRecords.forEach(record => {
+      const date = record.updated_at.split('T')[0];
+      if (activityByDate.has(date)) {
+        activityByDate.set(date, (activityByDate.get(date) || 0) + 1);
+      }
+    });
+
+    return last7Days.map(date => ({
+      date: new Date(date).toLocaleDateString('zh-CN', { weekday: 'short' }),
+      count: activityByDate.get(date) || 0,
+    }));
+  }, [practiceRecords]);
+
+  const maxCount = Math.max(...activity.map(a => a.count), 1);
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <TrendingUp className="h-5 w-5 text-green-600" />
+          <span>本周学习情况</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-end justify-between gap-2 h-32">
+          {activity.map((item, index) => (
+            <div key={index} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full flex flex-col items-center">
+                <span className="text-xs font-medium text-slate-700 mb-1">{item.count}</span>
+                <div
+                  className="w-6 bg-gradient-to-t from-blue-500 to-blue-300 rounded-t-md transition-all duration-300"
+                  style={{
+                    height: `${(item.count / maxCount) * 100}px`,
+                    minHeight: item.count > 0 ? '8px' : '4px',
+                    backgroundColor: item.count > 0 ? undefined : '#e2e8f0',
+                  }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground">{item.date}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+          <span>周一</span>
+          <span>周日</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function CategoryStatsCard() {
+  const { practiceRecords, nodes, questionBank } = useAppStore();
+  const stats = useMemo(() => calculateReviewStats(practiceRecords, nodes, questionBank), [practiceRecords, nodes, questionBank]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Award className="h-5 w-5 text-purple-600" />
+          <span>模块分析</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          {stats.categoryStats.map((cat, index) => {
+            const rate = cat.total > 0 ? Math.round((cat.correct / cat.total) * 100) : 0;
+            const psColor = cat.avgPS >= 120 ? 'text-green-600' : cat.avgPS >= 80 ? 'text-yellow-600' : 'text-red-600';
+            
+            return (
+              <div key={index} className="flex items-center gap-3">
+                <span className="w-16 text-xs font-medium text-slate-700">{cat.name}</span>
+                <div className="flex-1">
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
+                      style={{ width: `${rate}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="w-12 text-xs text-muted-foreground text-right">{rate}%</span>
+                <span className={`w-10 text-xs font-medium ${psColor} text-right`}>PS:{cat.avgPS}</span>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function QuickReportCard() {
+  const { practiceRecords, nodes, questionBank } = useAppStore();
+  const stats = useMemo(() => calculateReviewStats(practiceRecords, nodes, questionBank), [practiceRecords, nodes, questionBank]);
+
+  const getEncouragement = () => {
+    if (stats.totalPractices === 0) return '开始你的第一次练习吧！';
+    if (stats.correctRate >= 80) return '表现优秀，继续保持！';
+    if (stats.correctRate >= 60) return '继续加油，你正在进步！';
+    return '多练习巩固，相信你可以做得更好！';
+  };
+
+  const getLevel = () => {
+    const total = stats.totalPractices;
+    if (total >= 500) return { level: '学霸', emoji: '🏆', color: 'text-yellow-500' };
+    if (total >= 200) return { level: '进阶', emoji: '📚', color: 'text-blue-500' };
+    if (total >= 50) return { level: '入门', emoji: '🌱', color: 'text-green-500' };
+    return { level: '新手', emoji: '🎯', color: 'text-gray-500' };
+  };
+
+  const level = getLevel();
+
+  return (
+    <Card className="border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-yellow-500" />
+            <span className="text-sm font-semibold text-slate-800">今日报告</span>
+          </div>
+          <div className={`text-lg ${level.color}`}>{level.emoji}</div>
+        </div>
+        <div className="text-2xl font-bold text-slate-900 mb-1">
+          {stats.totalPractices > 0 ? `练习 ${stats.totalPractices} 次` : '尚未练习'}
+        </div>
+        <div className="text-sm text-slate-600 mb-3">{getEncouragement()}</div>
+        <div className="flex items-center gap-4 text-xs">
+          <span className="text-muted-foreground">当前等级: <span className={`font-semibold ${level.color}`}>{level.level}</span></span>
+          <span className="text-muted-foreground">掌握知识点: {stats.masteredCount} 个</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ReportDashboard() {
   const { nodes, questionBank, getWeakNodes } = useAppStore();
   const weakNodes = getWeakNodes();
@@ -858,13 +1169,23 @@ export function ReportDashboard() {
               </div>
             </CardContent>
           </Card>
-          <Tabs defaultValue="radar" className="space-y-4 sm:space-y-6">
-            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+          <Tabs defaultValue="overview" className="space-y-4 sm:space-y-6">
+            <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5 gap-1">
+              <TabsTrigger value="overview" className="h-8 flex-1 text-xs sm:text-sm">学习概览</TabsTrigger>
               <TabsTrigger value="radar" className="h-8 flex-1 text-xs sm:text-sm">能力雷达</TabsTrigger>
               <TabsTrigger value="trend" className="h-8 flex-1 text-xs sm:text-sm">PS 趋势</TabsTrigger>
               <TabsTrigger value="map" className="h-8 flex-1 text-xs sm:text-sm">全景图</TabsTrigger>
               <TabsTrigger value="records" className="h-8 flex-1 text-xs sm:text-sm">做题记录</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="overview" className="space-y-4 sm:space-y-6">
+              <QuickReportCard />
+              <ReviewSummaryCard />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <WeeklyActivityCard />
+                <CategoryStatsCard />
+              </div>
+            </TabsContent>
 
             <TabsContent value="radar" className="space-y-4 sm:space-y-6">
               <RadarChart />

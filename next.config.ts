@@ -7,9 +7,6 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ['*.dev.coze.site', '*.agent-sandbox-bj-a2-gw.trae.cn', 'localhost', '127.0.0.1'],
-  turbopack: {
-    root: projectRoot,
-  },
   images: {
     unoptimized: isStatic,
     remotePatterns: [
