@@ -27,7 +27,7 @@ import {
   Clock,
   BookOpen,
   Search,
-  Map,
+  Map as MapIcon,
   Dumbbell,
   ClipboardList,
   BarChart3,
@@ -440,7 +440,7 @@ export function RecentDeletionPanel() {
         const sortedNodes = [...item.payload.nodes].sort((a, b) => (
           (a.parent_id ? 1 : 0) - (b.parent_id ? 1 : 0)
         ));
-        const restoredIdByOldId = new Map<string, string>() as Map<string, string>;
+        const restoredIdByOldId = new Map<string, string>();
 
         for (const node of sortedNodes) {
           const parentId = node.parent_id ? restoredIdByOldId.get(node.parent_id) || null : null;
@@ -643,7 +643,7 @@ export function ManualPanel({ onNavigate }: { onNavigate?: (tab: AppTab) => void
     {
       id: 'mindcanvas',
       title: 'MindCanvas 知识学习',
-      icon: Map,
+      icon: MapIcon,
       targetTab: 'mindmap' as AppTab,
       actionLabel: '进入 MindCanvas',
       summary: '浏览知识结构、搜索节点、筛选薄弱点和高频考点。',
