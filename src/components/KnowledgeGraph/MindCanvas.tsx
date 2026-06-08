@@ -1,4 +1,4 @@
-﻿﻿'use client';
+﻿'use client';
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -844,15 +844,16 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
   }, [scale]);
 
   // 7. 鐢诲竷鎷栨嫿浜嬩欢
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
-    if (e.button === 0 && !target.closest('.mindmap-node')) {
+    if (!target.closest('.mindmap-node')) {
       setIsDragging(true);
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     }
   }, [position]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (resizeState) {
       const deltaX = (e.clientX - resizeState.startClientX) / scale;
       const deltaY = (e.clientY - resizeState.startClientY) / scale;
@@ -871,9 +872,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
   }, [isDragging, dragStart, resizeState, scale]);
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
     setIsDragging(false);
     setResizeState(null);
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   }, []);
 
   const handleZoomIn = useCallback(() => setScale(s => Math.min(3, s * 1.2)), []);
@@ -948,9 +950,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     setShowNotebook(!!(node.markdown && scale > 0.7));
   }, [scale, onSelectNode]);
 
-  const startResize = useCallback((e: React.MouseEvent, pos: PositionedNode) => {
+  const startResize = useCallback((e: React.PointerEvent, pos: PositionedNode) => {
     e.preventDefault();
     e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setSelectedNode(pos.node);
     setShowNotebook(false);
     setIsDragging(false);
@@ -1137,14 +1140,14 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       <div 
         ref={containerRef}
         className={cn(
-          "relative h-full w-full overflow-hidden bg-slate-50 select-none shadow-inner dark:from-slate-900 dark:to-slate-800 md:rounded-xl md:border md:border-slate-200/60",
+          "relative h-full w-full overflow-hidden bg-slate-50 select-none shadow-inner dark:from-slate-900 dark:to-slate-800 md:rounded-xl md:border md:border-slate-200/60 touch-none",
           isDragging ? 'cursor-grabbing' : 'cursor-default'
         )}
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         <div className="pointer-events-none absolute left-2 right-2 top-2 z-30 flex items-start justify-between gap-3 md:left-4 md:right-4 md:top-4">
           <div className="pointer-events-auto w-full rounded-lg border border-slate-200/80 bg-white/88 p-2 shadow-sm backdrop-blur-md md:max-w-[54rem]">
@@ -1553,7 +1556,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       "bg-white/80 hover:bg-blue-50 group-hover:opacity-100",
                       (selected || resizeState?.nodeId === node.id) && "opacity-100"
                     )}
-                    onMouseDown={(e) => startResize(e, pos)}
+                    onPointerDown={(e) => startResize(e, pos)}
                   >
                     <span className="absolute bottom-1.5 right-1.5 h-3 w-3 border-b-2 border-r-2 border-slate-400" />
                   </button>
