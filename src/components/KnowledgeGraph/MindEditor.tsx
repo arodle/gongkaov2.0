@@ -593,23 +593,39 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const handleGripDragStart = useCallback((nodeId: string) => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setTouchDragNodeId(nodeId);
+    setTouchDropTargetId(null);
     const node = nodes.find(n => n.id === nodeId);
     if (node) selectNode(node);
   }, [nodes]);
 
-  const handleRowDragOver = useCallback((nodeId: string) => (e: React.PointerEvent) => {
-    if (!touchDragNodeId || touchDragNodeId === nodeId) return;
+  const handleContainerDragMove = useCallback((e: React.PointerEvent) => {
+    if (!touchDragNodeId) return;
     e.preventDefault();
-    setTouchDropTargetId(nodeId);
+
+    // Find the row element under the pointer
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const row = el?.closest('[data-node-id]') as HTMLElement | null;
+    const targetId = row?.dataset.nodeId || null;
+
+    if (targetId && targetId !== touchDragNodeId) {
+      setTouchDropTargetId(targetId);
+    } else {
+      setTouchDropTargetId(null);
+    }
   }, [touchDragNodeId]);
 
-  const handleGripDragEnd = useCallback((e: React.PointerEvent) => {
+  const handleContainerDragEnd = useCallback((e: React.PointerEvent) => {
     if (!touchDragNodeId) return;
-    if (touchDropTargetId && touchDropTargetId !== touchDragNodeId) {
+
+    // Final check: what's under the pointer right now?
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const row = el?.closest('[data-node-id]') as HTMLElement | null;
+    const targetId = row?.dataset.nodeId || null;
+
+    if (targetId && targetId !== touchDragNodeId) {
       const draggedNode = nodes.find(n => n.id === touchDragNodeId);
-      const targetNode = nodes.find(n => n.id === touchDropTargetId);
+      const targetNode = nodes.find(n => n.id === targetId);
       if (draggedNode && targetNode) {
         if (draggedNode.parent_id === targetNode.parent_id) {
           // Same parent: reorder (insert after target)
@@ -623,33 +639,17 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           setHasChanges(true);
         } else {
           // Different parent: make child of target
-          moveNode(touchDragNodeId, touchDropTargetId);
+          moveNode(touchDragNodeId, targetId);
         }
       }
-    } else if (!touchDropTargetId && touchDragNodeId) {
-      // Dropped on root area: promote to root
+    } else if (!targetId) {
+      // Dropped on empty area (root zone): promote to root
       moveNode(touchDragNodeId, null);
     }
+
     setTouchDragNodeId(null);
     setTouchDropTargetId(null);
-    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-  }, [touchDragNodeId, touchDropTargetId, nodes, moveNode, pushUndo]);
-
-  const handleRootAreaDragOver = useCallback((e: React.PointerEvent) => {
-    if (touchDragNodeId) {
-      e.preventDefault();
-      setTouchDropTargetId(null);
-    }
-  }, [touchDragNodeId]);
-
-  const handleRootAreaDrop = useCallback((e: React.PointerEvent) => {
-    if (touchDragNodeId && !touchDropTargetId) {
-      moveNode(touchDragNodeId, null);
-    }
-    setTouchDragNodeId(null);
-    setTouchDropTargetId(null);
-    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-  }, [touchDragNodeId, touchDropTargetId, moveNode]);
+  }, [touchDragNodeId, nodes, moveNode, pushUndo]);
 
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
@@ -662,21 +662,21 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     return (
       <div key={node.id}>
         <div
+          data-node-id={node.id}
           className={cn(
             'group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100',
             isSelected && 'bg-blue-50 text-blue-700',
-            isTouchDragging && 'opacity-50 bg-blue-100',
-            isTouchDropTarget && 'ring-2 ring-blue-400 bg-blue-50',
+            isTouchDragging && 'opacity-40',
+            isTouchDropTarget && 'bg-blue-100 ring-2 ring-blue-400',
           )}
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => selectNode(node)}
-          onPointerMove={handleRowDragOver(node.id)}
         >
           <span
             onPointerDown={handleGripDragStart(node.id)}
-            className="shrink-0 cursor-grab active:cursor-grabbing touch-none"
+            className="shrink-0 cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-1 -ml-1 touch-none"
           >
-            <GripVertical className="h-3.5 w-3.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+            <GripVertical className="h-4 w-4" />
           </span>
           <button
             type="button"
@@ -835,8 +835,9 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         )}>
           <div
             className="p-2 min-h-[60px]"
-            onPointerUp={handleGripDragEnd}
-            onPointerMove={handleRootAreaDragOver}
+            onPointerMove={handleContainerDragMove}
+            onPointerUp={handleContainerDragEnd}
+            onPointerLeave={handleContainerDragEnd}
           >
             {treeData.map(root => renderNode(root, 0))}
           </div>
