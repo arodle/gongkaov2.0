@@ -1,4 +1,4 @@
-﻿﻿'use client';
+﻿'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -73,6 +73,13 @@ function buildTree(nodes: MapNodeRecord[]): TreeNode[] {
     }
   });
 
+  // Sort children by sort_order at every level
+  const sortChildren = (treeNodes: TreeNode[]) => {
+    treeNodes.sort((a, b) => (a.node.sort_order ?? 0) - (b.node.sort_order ?? 0));
+    treeNodes.forEach(tn => sortChildren(tn.children));
+  };
+  sortChildren(roots);
+
   return roots;
 }
 
@@ -117,7 +124,7 @@ function rebuildParentEdges(mindMapId: string, nodes: MapNodeRecord[]): MapEdgeR
     }));
 }
 
-function createNodeRecord(mindMapId: string, parentId: string | null, name: string): MapNodeRecord {
+function createNodeRecord(mindMapId: string, parentId: string | null, name: string, sortOrder: number = 0): MapNodeRecord {
   const now = new Date().toISOString();
   return {
     id: `mn_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
@@ -135,6 +142,7 @@ function createNodeRecord(mindMapId: string, parentId: string | null, name: stri
     width: 160,
     height: 48,
     expanded: true,
+    sort_order: sortOrder,
     created_at: now,
     updated_at: now,
   };
@@ -149,12 +157,14 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [touchDragNodeId, setTouchDragNodeId] = useState<string | null>(null);
+  const [touchDropTargetId, setTouchDropTargetId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(!initialNodes?.length);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [deletedNodeIds, setDeletedNodeIds] = useState<string[]>([]);
   const [deletedEdgeIds, setDeletedEdgeIds] = useState<string[]>([]);
+  const [undoStack, setUndoStack] = useState<Array<{ nodes: MapNodeRecord[]; edges: MapEdgeRecord[]; deletedNodeIds: string[]; deletedEdgeIds: string[] }>>([]);
   const [showManual, setShowManual] = useState(false);
   const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
   const [isTextEditorCollapsed, setIsTextEditorCollapsed] = useState(false);
@@ -327,7 +337,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const addNode = useCallback((parentId: string | null) => {
     if (!mindMap) return;
 
-    const node = createNodeRecord(mindMap.id, parentId, parentId ? '新子节点' : '新根节点');
+    const siblingCount = nodes.filter(n => n.parent_id === parentId).length;
+    const node = createNodeRecord(mindMap.id, parentId, parentId ? '新子节点' : '新根节点', siblingCount);
     setNodes(prev => [...prev, node]);
     if (parentId) {
       setExpandedNodes(prev => new Set([...prev, parentId]));
@@ -343,9 +354,95 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     addNode(selectedNode.parent_id);
   }, [addNode, selectedNode]);
 
+  const pushUndo = useCallback(() => {
+    setUndoStack(prev => [...prev.slice(-49), { nodes: [...nodes], edges: [...edges], deletedNodeIds: [...deletedNodeIds], deletedEdgeIds: [...deletedEdgeIds] }]);
+  }, [nodes, edges, deletedNodeIds, deletedEdgeIds]);
+
+  const moveUp = useCallback(() => {
+    if (!selectedNode) return;
+    const siblings = nodes.filter(n => n.parent_id === selectedNode.parent_id).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const idx = siblings.findIndex(s => s.id === selectedNode.id);
+    if (idx <= 0) return;
+    pushUndo();
+    const prevSibling = siblings[idx - 1];
+    const newOrder = prevSibling.sort_order ?? 0;
+    setNodes(prev => prev.map(n => {
+      if (n.id === selectedNode.id) return { ...n, sort_order: newOrder, updated_at: new Date().toISOString() };
+      if (n.id === prevSibling.id) return { ...n, sort_order: selectedNode.sort_order ?? 0, updated_at: new Date().toISOString() };
+      return n;
+    }));
+    setHasChanges(true);
+  }, [selectedNode, nodes, pushUndo]);
+
+  const moveDown = useCallback(() => {
+    if (!selectedNode) return;
+    const siblings = nodes.filter(n => n.parent_id === selectedNode.parent_id).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const idx = siblings.findIndex(s => s.id === selectedNode.id);
+    if (idx < 0 || idx >= siblings.length - 1) return;
+    pushUndo();
+    const nextSibling = siblings[idx + 1];
+    const newOrder = nextSibling.sort_order ?? 0;
+    setNodes(prev => prev.map(n => {
+      if (n.id === selectedNode.id) return { ...n, sort_order: newOrder, updated_at: new Date().toISOString() };
+      if (n.id === nextSibling.id) return { ...n, sort_order: selectedNode.sort_order ?? 0, updated_at: new Date().toISOString() };
+      return n;
+    }));
+    setHasChanges(true);
+  }, [selectedNode, nodes, pushUndo]);
+
+  const promoteNode = useCallback(() => {
+    if (!selectedNode?.parent_id) return;
+    const parent = nodes.find(n => n.id === selectedNode.parent_id);
+    if (!parent?.parent_id && !parent) return;
+    pushUndo();
+    const grandParentId = parent?.parent_id ?? null;
+    const parentOrder = parent?.sort_order ?? 0;
+    const newNodes = nodes.map(n => {
+      if (n.id === selectedNode.id) return { ...n, parent_id: grandParentId, sort_order: parentOrder + 1, updated_at: new Date().toISOString() };
+      if (n.parent_id === grandParentId && (n.sort_order ?? 0) > parentOrder) return { ...n, sort_order: (n.sort_order ?? 0) + 1 };
+      return n;
+    });
+    setNodes(newNodes);
+    setEdges(rebuildParentEdges(mindMap?.id || 'default', newNodes));
+    setHasChanges(true);
+  }, [selectedNode, nodes, mindMap, pushUndo]);
+
+  const demoteNode = useCallback(() => {
+    if (!selectedNode) return;
+    const siblings = nodes.filter(n => n.parent_id === selectedNode.parent_id).sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const idx = siblings.findIndex(s => s.id === selectedNode.id);
+    if (idx <= 0) return;
+    const prevSibling = siblings[idx - 1];
+    pushUndo();
+    const newParentId = prevSibling.id;
+    const childCount = nodes.filter(n => n.parent_id === newParentId).length;
+    const newNodes = nodes.map(n => {
+      if (n.id === selectedNode.id) return { ...n, parent_id: newParentId, sort_order: childCount, updated_at: new Date().toISOString() };
+      return n;
+    });
+    setNodes(newNodes);
+    setEdges(rebuildParentEdges(mindMap?.id || 'default', newNodes));
+    setExpandedNodes(prev => new Set([...prev, newParentId]));
+    setHasChanges(true);
+  }, [selectedNode, nodes, mindMap, pushUndo]);
+
+  const undo = useCallback(() => {
+    setUndoStack(prev => {
+      if (prev.length === 0) return prev;
+      const snapshot = prev[prev.length - 1];
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setDeletedNodeIds(snapshot.deletedNodeIds);
+      setDeletedEdgeIds(snapshot.deletedEdgeIds);
+      return prev.slice(0, -1);
+    });
+  }, []);
+
   const moveNode = useCallback((nodeId: string, nextParentId: string | null) => {
     if (nodeId === nextParentId) return;
     if (nextParentId && isDescendant(nodes, nodeId, nextParentId)) return;
+
+    pushUndo();
 
     const currentNode = nodes.find(node => node.id === nodeId);
     if (currentNode?.parent_id && currentNode.parent_id !== nextParentId) {
@@ -380,6 +477,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       '删除后报告、错题本和靶向练习可能出现引用缺口。确认继续？',
     ].join('\n'));
     if (!confirmed) return;
+
+    pushUndo();
 
     const deletedNodes = nodes.filter(item => ids.has(item.id));
     const deletedEdges = edges.filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id));
@@ -439,6 +538,13 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       const target = event.target as HTMLElement | null;
       const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
       if (isTyping) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
+        event.preventDefault();
+        undo();
+        return;
+      }
+
       if (!selectedNodeId) return;
 
       if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -449,7 +555,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteNode, selectedNodeId]);
+  }, [deleteNode, selectedNodeId, undo]);
 
   const saveToNeon = useCallback(async () => {
     if (!mindMap) return;
@@ -484,31 +590,94 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     }
   }, [deletedEdgeIds, deletedNodeIds, mindMap, nodes, onSave]);
 
+  const handleGripDragStart = useCallback((nodeId: string) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setTouchDragNodeId(nodeId);
+    const node = nodes.find(n => n.id === nodeId);
+    if (node) selectNode(node);
+  }, [nodes]);
+
+  const handleRowDragOver = useCallback((nodeId: string) => (e: React.PointerEvent) => {
+    if (!touchDragNodeId || touchDragNodeId === nodeId) return;
+    e.preventDefault();
+    setTouchDropTargetId(nodeId);
+  }, [touchDragNodeId]);
+
+  const handleGripDragEnd = useCallback((e: React.PointerEvent) => {
+    if (!touchDragNodeId) return;
+    if (touchDropTargetId && touchDropTargetId !== touchDragNodeId) {
+      const draggedNode = nodes.find(n => n.id === touchDragNodeId);
+      const targetNode = nodes.find(n => n.id === touchDropTargetId);
+      if (draggedNode && targetNode) {
+        if (draggedNode.parent_id === targetNode.parent_id) {
+          // Same parent: reorder (insert after target)
+          pushUndo();
+          const targetOrder = targetNode.sort_order ?? 0;
+          setNodes(prev => prev.map(n => {
+            if (n.id === touchDragNodeId) return { ...n, sort_order: targetOrder + 1, updated_at: new Date().toISOString() };
+            if (n.parent_id === draggedNode.parent_id && (n.sort_order ?? 0) > targetOrder && n.id !== touchDragNodeId) return { ...n, sort_order: (n.sort_order ?? 0) + 1 };
+            return n;
+          }));
+          setHasChanges(true);
+        } else {
+          // Different parent: make child of target
+          moveNode(touchDragNodeId, touchDropTargetId);
+        }
+      }
+    } else if (!touchDropTargetId && touchDragNodeId) {
+      // Dropped on root area: promote to root
+      moveNode(touchDragNodeId, null);
+    }
+    setTouchDragNodeId(null);
+    setTouchDropTargetId(null);
+    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  }, [touchDragNodeId, touchDropTargetId, nodes, moveNode, pushUndo]);
+
+  const handleRootAreaDragOver = useCallback((e: React.PointerEvent) => {
+    if (touchDragNodeId) {
+      e.preventDefault();
+      setTouchDropTargetId(null);
+    }
+  }, [touchDragNodeId]);
+
+  const handleRootAreaDrop = useCallback((e: React.PointerEvent) => {
+    if (touchDragNodeId && !touchDropTargetId) {
+      moveNode(touchDragNodeId, null);
+    }
+    setTouchDragNodeId(null);
+    setTouchDropTargetId(null);
+    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  }, [touchDragNodeId, touchDropTargetId, moveNode]);
+
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
     const isExpanded = expandedNodes.has(node.id);
     const isSelected = selectedNodeId === node.id;
     const isEditing = editingNodeId === node.id;
+    const isTouchDragging = touchDragNodeId === node.id;
+    const isTouchDropTarget = touchDropTargetId === node.id;
 
     return (
       <div key={node.id}>
         <div
-          draggable
-          onDragStart={() => setDraggingNodeId(node.id)}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            if (draggingNodeId) moveNode(draggingNodeId, node.id);
-            setDraggingNodeId(null);
-          }}
           className={cn(
             'group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100',
-            isSelected && 'bg-blue-50 text-blue-700'
+            isSelected && 'bg-blue-50 text-blue-700',
+            isTouchDragging && 'opacity-50 bg-blue-100',
+            isTouchDropTarget && 'ring-2 ring-blue-400 bg-blue-50',
           )}
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => selectNode(node)}
+          onPointerMove={handleRowDragOver(node.id)}
         >
-          <GripVertical className="h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 group-hover:opacity-100" />
+          <span
+            onPointerDown={handleGripDragStart(node.id)}
+            className="shrink-0 cursor-grab active:cursor-grabbing touch-none"
+          >
+            <GripVertical className="h-3.5 w-3.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+          </span>
           <button
             type="button"
             className="grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-slate-200"
@@ -665,13 +834,9 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           "md:block md:flex-[1_1_42%]"
         )}>
           <div
-            className="p-2"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (draggingNodeId) moveNode(draggingNodeId, null);
-              setDraggingNodeId(null);
-            }}
+            className="p-2 min-h-[60px]"
+            onPointerUp={handleGripDragEnd}
+            onPointerMove={handleRootAreaDragOver}
           >
             {treeData.map(root => renderNode(root, 0))}
           </div>

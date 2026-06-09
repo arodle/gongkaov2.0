@@ -187,6 +187,7 @@ export interface MapNodeRecord {
   width: number;
   height: number;
   expanded: boolean;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }
