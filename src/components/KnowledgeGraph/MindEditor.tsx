@@ -10,7 +10,6 @@ import {
   Edit3,
   Eye,
   FileText,
-  GripVertical,
   Heading2,
   Highlighter,
   ImagePlus,
@@ -159,6 +158,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [editingTitle, setEditingTitle] = useState('');
   const [touchDragNodeId, setTouchDragNodeId] = useState<string | null>(null);
   const [touchDropTargetId, setTouchDropTargetId] = useState<string | null>(null);
+  const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [isLoading, setIsLoading] = useState(!initialNodes?.length);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -590,16 +590,29 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     }
   }, [deletedEdgeIds, deletedNodeIds, mindMap, nodes, onSave]);
 
-  const handleGripDragStart = useCallback((nodeId: string) => (e: React.PointerEvent) => {
+  const handleRowPointerDown = useCallback((nodeId: string) => (e: React.PointerEvent) => {
+    // Don't start drag on buttons
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) return;
     e.preventDefault();
-    e.stopPropagation();
-    setTouchDragNodeId(nodeId);
-    setTouchDropTargetId(null);
-    const node = nodes.find(n => n.id === nodeId);
-    if (node) selectNode(node);
-  }, [nodes]);
+    setDragStartPos({ x: e.clientX, y: e.clientY, nodeId });
+  }, []);
 
   const handleContainerDragMove = useCallback((e: React.PointerEvent) => {
+    // If we have a pending drag that hasn't started yet
+    if (dragStartPos && !touchDragNodeId) {
+      const dx = Math.abs(e.clientX - dragStartPos.x);
+      const dy = Math.abs(e.clientY - dragStartPos.y);
+      if (dx > 5 || dy > 5) {
+        // Start actual drag
+        setTouchDragNodeId(dragStartPos.nodeId);
+        setTouchDropTargetId(null);
+        const node = nodes.find(n => n.id === dragStartPos.nodeId);
+        if (node) selectNode(node);
+      }
+      return;
+    }
+
     if (!touchDragNodeId) return;
     e.preventDefault();
 
@@ -613,9 +626,17 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     } else {
       setTouchDropTargetId(null);
     }
-  }, [touchDragNodeId]);
+  }, [dragStartPos, touchDragNodeId, nodes]);
 
   const handleContainerDragEnd = useCallback((e: React.PointerEvent) => {
+    // If it was a click (no drag started), select the node
+    if (dragStartPos && !touchDragNodeId) {
+      const node = nodes.find(n => n.id === dragStartPos.nodeId);
+      if (node) selectNode(node);
+      setDragStartPos(null);
+      return;
+    }
+
     if (!touchDragNodeId) return;
 
     // Final check: what's under the pointer right now?
@@ -627,8 +648,9 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       const draggedNode = nodes.find(n => n.id === touchDragNodeId);
       const targetNode = nodes.find(n => n.id === targetId);
       if (draggedNode && targetNode) {
-        if (draggedNode.parent_id === targetNode.parent_id) {
-          // Same parent: reorder (insert after target)
+        const sameParent = draggedNode.parent_id === targetNode.parent_id;
+        const bothRoots = !draggedNode.parent_id && !targetNode.parent_id;
+        if (sameParent && !bothRoots) {
           pushUndo();
           const targetOrder = targetNode.sort_order ?? 0;
           setNodes(prev => prev.map(n => {
@@ -638,18 +660,17 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           }));
           setHasChanges(true);
         } else {
-          // Different parent: make child of target
           moveNode(touchDragNodeId, targetId);
         }
       }
     } else if (!targetId) {
-      // Dropped on empty area (root zone): promote to root
       moveNode(touchDragNodeId, null);
     }
 
     setTouchDragNodeId(null);
     setTouchDropTargetId(null);
-  }, [touchDragNodeId, nodes, moveNode, pushUndo]);
+    setDragStartPos(null);
+  }, [dragStartPos, touchDragNodeId, nodes, moveNode, pushUndo]);
 
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
@@ -663,21 +684,15 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       <div key={node.id}>
         <div
           data-node-id={node.id}
+          onPointerDown={handleRowPointerDown(node.id)}
           className={cn(
-            'group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100',
+            'group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100 cursor-grab active:cursor-grabbing select-none',
             isSelected && 'bg-blue-50 text-blue-700',
             isTouchDragging && 'opacity-40',
             isTouchDropTarget && 'bg-blue-100 ring-2 ring-blue-400',
           )}
           style={{ paddingLeft: 8 + depth * 16 }}
-          onClick={() => selectNode(node)}
         >
-          <span
-            onPointerDown={handleGripDragStart(node.id)}
-            className="shrink-0 cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-1 -ml-1 touch-none"
-          >
-            <GripVertical className="h-4 w-4" />
-          </span>
           <button
             type="button"
             className="grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-slate-200"
