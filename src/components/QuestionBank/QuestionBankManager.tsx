@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { QuestionBankItem } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Plus,
   Upload,
@@ -133,6 +144,14 @@ interface UploadedPaperData {
 }
 
 type PaperDraftFilter = 'all' | 'ready' | 'missing-answer' | 'missing-explanation' | 'missing-binding' | 'low-confidence' | 'duplicate';
+
+interface ConfirmState {
+  title: string;
+  description: React.ReactNode;
+  confirmLabel?: string;
+  destructive?: boolean;
+  onConfirm: () => void | Promise<void>;
+}
 
 const BINDING_AUDIT_REPORT_STORAGE_KEY = 'gongkao:knowledgeBindingAuditReport';
 const BINDING_AUDIT_LAST_AT_STORAGE_KEY = 'gongkao:lastKnowledgeBindingAuditAt';
@@ -240,6 +259,7 @@ export function QuestionBankManager() {
   const [filterType, setFilterType] = useState<'all' | 'real' | 'simulated' | 'binding-error' | 'similar'>('all');
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
   const [showPaperDialog, setShowPaperDialog] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [editingQuestion, setEditingQuestion] = useState<QuestionBankItem | null>(null);
   const [formData, setFormData] = useState<QuestionFormData>(initialFormData);
   const [paperFormData, setPaperFormData] = useState<ExamPaperFormData>({
@@ -418,7 +438,7 @@ export function QuestionBankManager() {
       reader.readAsDataURL(file);
     });
     if (rejected > 0) {
-      alert(`已跳过 ${rejected} 张图片。单张图片需小于 ${formatBytes(INLINE_IMAGE_MAX_BYTES)}，每题最多 ${QUESTION_IMAGES_MAX_COUNT} 张。`);
+      toast.warning(`已跳过 ${rejected} 张图片。单张图片需小于 ${formatBytes(INLINE_IMAGE_MAX_BYTES)}，每题最多 ${QUESTION_IMAGES_MAX_COUNT} 张。`);
     }
     e.target.value = '';
   }, [formData.images.length]);
@@ -724,14 +744,22 @@ export function QuestionBankManager() {
     );
 
     if (targetIndexes.size === 0) return;
-    if (!window.confirm(`将删除当前筛选下 ${targetIndexes.size} 道低质量草稿题，删除后不可恢复。确认继续？`)) return;
 
-    setUploadedPaper(prev => {
-      if (!prev?.questions) return prev;
-      return {
-        ...prev,
-        questions: prev.questions.filter((_, index) => !targetIndexes.has(index)),
-      };
+    setConfirmState({
+      title: '删除低质量草稿题',
+      description: `将删除当前筛选下 ${targetIndexes.size} 道低质量草稿题，删除后不可恢复。`,
+      confirmLabel: '删除草稿',
+      destructive: true,
+      onConfirm: () => {
+        setUploadedPaper(prev => {
+          if (!prev?.questions) return prev;
+          return {
+            ...prev,
+            questions: prev.questions.filter((_, index) => !targetIndexes.has(index)),
+          };
+        });
+        toast.success(`已删除 ${targetIndexes.size} 道低质量草稿题`);
+      },
     });
   }, [filteredUploadedQuestions, isLowQualityDraftQuestion]);
 
@@ -752,7 +780,7 @@ export function QuestionBankManager() {
       };
     });
     if (applied === 0) {
-      alert('当前筛选结果中没有可自动匹配的知识点。');
+      toast.info('当前筛选结果中没有可自动匹配的知识点。');
     }
   }, [draftKnowledgeRecommendations, filteredUploadedQuestions]);
 
@@ -785,7 +813,7 @@ export function QuestionBankManager() {
         explanation: generatedExplanationToText(generated),
       });
     } catch (error) {
-      alert(error instanceof Error ? error.message : '生成失败');
+      toast.error(error instanceof Error ? error.message : '生成失败');
     } finally {
       setGeneratingExplanationIndex(null);
     }
@@ -835,7 +863,7 @@ export function QuestionBankManager() {
 
     const imageResult = filterInlineImageUrls(formData.images);
     if (imageResult.dropped > 0) {
-      alert(`已跳过 ${imageResult.dropped} 张过大或超出数量限制的图片。`);
+      toast.warning(`已跳过 ${imageResult.dropped} 张过大或超出数量限制的图片。`);
     }
 
     const questionData: QuestionBankItem = normalizeQuestionLink({
@@ -902,54 +930,74 @@ export function QuestionBankManager() {
       '删除后历史报告、错题回顾和套卷覆盖可能出现引用缺口。确认继续？',
     ];
 
-    if (confirm(impactLines.join('\n'))) {
-      if (question) {
-        saveRecentDeletion({
-          kind: 'question',
-          title: question.content.slice(0, 48) || '已删除题目',
-          summary: [
-            question.examPaper ? `套卷：${question.examPaper}` : '未归入套卷',
-            question.linkedAngleName ? `知识点：${question.linkedAngleName}` : '未绑定知识点',
-          ].join('；'),
-          payload: { question },
-        });
-      }
-      deleteQuestion(id);
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deleteQuestionIds: [id] }),
-      }).catch(err => console.error('Failed to soft delete question in Neon:', err));
-    }
+    setConfirmState({
+      title: '删除题目',
+      description: (
+        <div className="space-y-1 text-left">
+          {impactLines.filter(Boolean).map((line, index) => (
+            <p key={index}>{line}</p>
+          ))}
+        </div>
+      ),
+      confirmLabel: '删除题目',
+      destructive: true,
+      onConfirm: () => {
+        if (question) {
+          saveRecentDeletion({
+            kind: 'question',
+            title: question.content.slice(0, 48) || '已删除题目',
+            summary: [
+              question.examPaper ? `套卷：${question.examPaper}` : '未归入套卷',
+              question.linkedAngleName ? `知识点：${question.linkedAngleName}` : '未绑定知识点',
+            ].join('；'),
+            payload: { question },
+          });
+        }
+        deleteQuestion(id);
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deleteQuestionIds: [id] }),
+        }).catch(err => console.error('Failed to soft delete question in Neon:', err));
+        toast.success('题目已删除，可在个人中心最近删除中尝试恢复');
+      },
+    });
   }, [answerRecords, deleteQuestion, practiceRecords, questionBank]);
 
   const handleDeleteSelectedQuestions = useCallback(() => {
     const ids = Array.from(selectedQuestions);
     if (ids.length === 0) return;
-    if (!window.confirm(`确认删除已选的 ${ids.length} 道题？删除后可在个人中心“最近删除”中尝试恢复。`)) return;
-
-    ids.forEach(id => {
-      const question = questionBank.find(item => item.id === id);
-      if (question) {
-        saveRecentDeletion({
-          kind: 'question',
-          title: question.content.slice(0, 48) || '已删除题目',
-          summary: [
-            question.examPaper ? `套卷：${question.examPaper}` : '未归入套卷',
-            question.linkedAngleName ? `知识点：${question.linkedAngleName}` : '未绑定知识点',
-          ].join('；'),
-          payload: { question },
+    setConfirmState({
+      title: '批量删除题目',
+      description: `确认删除已选的 ${ids.length} 道题？删除后可在个人中心“最近删除”中尝试恢复。`,
+      confirmLabel: '删除已选',
+      destructive: true,
+      onConfirm: () => {
+        ids.forEach(id => {
+          const question = questionBank.find(item => item.id === id);
+          if (question) {
+            saveRecentDeletion({
+              kind: 'question',
+              title: question.content.slice(0, 48) || '已删除题目',
+              summary: [
+                question.examPaper ? `套卷：${question.examPaper}` : '未归入套卷',
+                question.linkedAngleName ? `知识点：${question.linkedAngleName}` : '未绑定知识点',
+              ].join('；'),
+              payload: { question },
+            });
+          }
+          deleteQuestion(id);
         });
-      }
-      deleteQuestion(id);
-    });
 
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deleteQuestionIds: ids }),
-    }).catch(err => console.error('Failed to soft delete selected questions in Neon:', err));
-    setSelectedQuestions(new Set());
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deleteQuestionIds: ids }),
+        }).catch(err => console.error('Failed to soft delete selected questions in Neon:', err));
+        setSelectedQuestions(new Set());
+        toast.success(`已删除 ${ids.length} 道题，可在个人中心最近删除中尝试恢复`);
+      },
+    });
   }, [deleteQuestion, questionBank, selectedQuestions]);
 
   const syncQuestionsToNeon = useCallback((questions: QuestionBankItem[]) => {
@@ -1027,12 +1075,12 @@ export function QuestionBankManager() {
             }
           });
           if (droppedImages > 0) {
-            alert(`导入时已跳过 ${droppedImages} 张过大或超出数量限制的图片。`);
+            toast.warning(`导入时已跳过 ${droppedImages} 张过大或超出数量限制的图片。`);
           }
-          alert(`成功导入 ${data.length} 道题目`);
+          toast.success(`成功导入 ${data.length} 道题目`);
         }
       } catch {
-        alert('导入失败，请检查文件格式');
+        toast.error('导入失败，请检查文件格式');
       }
     };
     reader.readAsText(file);
@@ -1194,7 +1242,7 @@ export function QuestionBankManager() {
           });
         }
       } catch (error) {
-        alert('文件解析失败，请检查格式是否正确');
+        toast.error('文件解析失败，请检查格式是否正确');
         console.error(error);
       }
     };
@@ -1215,7 +1263,7 @@ export function QuestionBankManager() {
     } else {
       // 上传模式：将题目添加到题库并记录ID
       if (!uploadedPaper?.questions?.length) {
-        alert('请先上传套卷文件');
+        toast.warning('请先上传套卷文件');
         return;
       }
 
@@ -1231,12 +1279,12 @@ export function QuestionBankManager() {
       importedDraftKeys = new Set(finalQuestionsToImport.map(question => question.id || `${question.content}::${question.correctAnswer || ''}`));
 
       if (questionsToImport.length > 0 && finalQuestionsToImport.length === 0) {
-        alert('当前可导入草稿均为疑似重复题。可关闭“跳过疑似重复草稿”后再导入。');
+        toast.warning('当前可导入草稿均为疑似重复题。可关闭“跳过疑似重复草稿”后再导入。');
         return;
       }
 
       if (finalQuestionsToImport.length === 0) {
-        alert('当前没有可入库的草稿题。');
+        toast.info('当前没有可入库的草稿题。');
         return;
       }
 
@@ -1246,12 +1294,12 @@ export function QuestionBankManager() {
       const missingBindingCount = finalQuestionsToImport.filter(q => !q.linkedAngleId && !q.knowledgePath).length;
 
       if (missingAnswerCount > 0 || missingOptionsCount > 0) {
-        alert(`还有 ${missingAnswerCount} 道题缺答案、${missingOptionsCount} 道题选项不足，不能进入正式题库。请先补齐。`);
+        toast.warning(`还有 ${missingAnswerCount} 道题缺答案、${missingOptionsCount} 道题选项不足，不能进入正式题库。请先补齐。`);
         return;
       }
 
-      if ((missingExplanationCount > 0 || missingBindingCount > 0) && !window.confirm(`还有 ${missingExplanationCount} 道题缺解析、${missingBindingCount} 道题未绑定知识点。可以先入库，但建议后续补齐。确认继续？`)) {
-        return;
+      if (missingExplanationCount > 0 || missingBindingCount > 0) {
+        toast.warning(`还有 ${missingExplanationCount} 道题缺解析、${missingBindingCount} 道题未绑定知识点。已先入库，建议后续补齐。`);
       }
       
       questionIds = [];
@@ -1288,7 +1336,7 @@ export function QuestionBankManager() {
         questionIds.push(newQuestion.id);
       });
       if (droppedImages > 0) {
-        alert(`套卷导入时已跳过 ${droppedImages} 张过大或超出数量限制的图片。`);
+        toast.warning(`套卷导入时已跳过 ${droppedImages} 张过大或超出数量限制的图片。`);
       }
     }
 
@@ -1351,7 +1399,7 @@ export function QuestionBankManager() {
         });
         setUploadedPaper(null);
         setPaperCreationMode('select');
-        alert(`已导入 ${questionIds.length} 道可入库题，套卷创建成功！`);
+        toast.success(`已导入 ${questionIds.length} 道可入库题，套卷创建成功！`);
         return;
       }
 
@@ -1359,7 +1407,7 @@ export function QuestionBankManager() {
         ...uploadedPaper,
         questions: remainingQuestions,
       });
-      alert(`已导入 ${questionIds.length} 道可入库题，剩余 ${remainingQuestions.length} 道草稿继续保留。`);
+      toast.success(`已导入 ${questionIds.length} 道可入库题，剩余 ${remainingQuestions.length} 道草稿继续保留。`);
       return;
     }
 
@@ -1373,7 +1421,7 @@ export function QuestionBankManager() {
     setSelectedQuestions(new Set());
     setUploadedPaper(null);
     setPaperCreationMode('select');
-    alert('套卷创建成功！');
+    toast.success('套卷创建成功！');
   }, [paperFormData, selectedQuestions, paperCreationMode, uploadedPaper, importReadyOnly, addExamPaper, addQuestion, normalizeQuestionLink, questionBank, syncQuestionsToNeon, updateQuestion]);
 
   const getQuestionKnowledgeLabel = useCallback((question: QuestionLinkLike) => {
@@ -2171,7 +2219,7 @@ export function QuestionBankManager() {
           <div className="min-h-0 flex-1 overflow-hidden">
             <ScrollArea className="h-full">
               <div className="space-y-5 p-5 lg:p-6">
-            <div className="grid gap-4 rounded-lg border bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1.4fr)_220px]">
+            <div className="grid gap-4 rounded-lg border bg-white p-4 shadow-sm lg:grid-cols-[minmax(0,1.4fr)_220px]">
               <div className="space-y-2">
                 <label className="text-sm font-medium">套卷名称</label>
                 <Input
@@ -2312,7 +2360,7 @@ export function QuestionBankManager() {
                       {paperParserProvider === 'rule' ? '无需密钥' : '模型辅助'}
                     </Badge>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3 lg:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">模型供应商</label>
                       <select
@@ -2361,7 +2409,7 @@ export function QuestionBankManager() {
                       <div className="text-sm font-medium">AI补解析模型</div>
                       <Badge variant="outline">用于单题生成结构化解析</Badge>
                     </div>
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 lg:grid-cols-2">
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-muted-foreground">模型供应商</label>
                         <select
@@ -2476,7 +2524,7 @@ export function QuestionBankManager() {
                           </Button>
                         ))}
                       </div>
-                      <div className="grid gap-2 rounded-lg border bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <div className="grid gap-2 rounded-lg border bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-muted-foreground">批量绑定当前筛选结果</label>
                           <Input
@@ -2496,7 +2544,7 @@ export function QuestionBankManager() {
                           应用到 {filteredUploadedQuestions.length} 题
                         </Button>
                       </div>
-                      <div className="grid gap-2 rounded-lg border bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                      <div className="grid gap-2 rounded-lg border bg-slate-50 p-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-muted-foreground">批量设置当前筛选题型</label>
                           <Input
@@ -2615,7 +2663,7 @@ export function QuestionBankManager() {
                                 </div>
                               </div>
                             )}
-                            <div className="grid gap-2 md:grid-cols-2">
+                            <div className="grid gap-2 lg:grid-cols-2">
                               {(['A', 'B', 'C', 'D'] as const).map((label, optionIndex) => {
                                 const option = q.options?.find(item => item.label === label) || q.options?.[optionIndex] || { label, text: '' };
                                 return (
@@ -2640,7 +2688,7 @@ export function QuestionBankManager() {
                                 );
                               })}
                             </div>
-                            <div className="grid gap-2 md:grid-cols-[140px_180px_minmax(0,1fr)]">
+                            <div className="grid gap-2 lg:grid-cols-[140px_180px_minmax(0,1fr)]">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-muted-foreground">答案</label>
                                 <select
@@ -2710,7 +2758,7 @@ export function QuestionBankManager() {
                               placeholder="解析，可后续补齐"
                             />
                             {q.generatedExplanation && (
-                              <div className="grid gap-3 md:grid-cols-2">
+                              <div className="grid gap-3 lg:grid-cols-2">
                                 {q.generatedExplanation.corePitfall && (
                                   <div className="rounded-lg border bg-slate-50 p-3">
                                     <div className="mb-1 text-xs font-semibold text-slate-700">核心考点必挖坑</div>
@@ -2865,6 +2913,30 @@ export function QuestionBankManager() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AlertDialog open={!!confirmState} onOpenChange={(open) => !open && setConfirmState(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState?.title}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>{confirmState?.description}</div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className={confirmState?.destructive ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : undefined}
+              onClick={() => {
+                const action = confirmState?.onConfirm;
+                setConfirmState(null);
+                void action?.();
+              }}
+            >
+              {confirmState?.confirmLabel || '确认'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

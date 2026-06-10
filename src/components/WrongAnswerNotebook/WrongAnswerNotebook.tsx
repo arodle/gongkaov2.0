@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { KnowledgeNodeRecord, QuestionBankItem } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -542,7 +543,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
     }));
 
     if (exportData.length === 0) {
-      alert('没有可导出的数据');
+      toast.info('没有可导出的数据');
       return;
     }
 
@@ -601,7 +602,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
     if (!selectedItem) return;
     const question = questionBank.find(item => item.id === selectedItem.questionId);
     if (!question) {
-      alert('题目不存在，无法生成解析');
+      toast.error('题目不存在，无法生成解析');
       return;
     }
 
@@ -630,7 +631,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI 解析生成失败';
-      alert(message);
+      toast.error(message);
     } finally {
       setGeneratingExplanationId(null);
     }
@@ -724,7 +725,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
   }, [selectedId, expandedItems]);
 
   return (
-    <div className="h-screen w-screen flex flex-col md:flex-row overflow-hidden">
+    <div className="h-screen w-screen flex flex-col lg:flex-row overflow-hidden">
       <Sheet open={showDrawer} onOpenChange={setShowDrawer}>
         <SheetContent side="left" className="w-[320px] sm:w-[360px]">
           <SheetHeader>
@@ -864,7 +865,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
         </SheetContent>
       </Sheet>
 
-      <div className="hidden md:flex flex-col w-1/2 border-r">
+      <div className="hidden lg:flex flex-col w-[42%] xl:w-1/2 border-r">
         <div className="p-3 border-b space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -997,7 +998,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
       <div className="flex-1 flex flex-col w-full max-w-full overflow-hidden px-0 md:px-0">
         {selectedItem ? (
           <>
-            <div className="flex items-center justify-between p-3 border-b md:hidden">
+            <div className="flex items-center justify-between p-3 border-b lg:hidden">
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" onClick={() => setShowDrawer(true)} className="h-8 w-8">
                   <ListTodo className="h-4 w-4" />
@@ -1024,7 +1025,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
               </Button>
             </div>
 
-            <div className="hidden md:flex items-center justify-between p-3 border-b">
+            <div className="hidden lg:flex items-center justify-between p-3 border-b">
               <div className="flex items-center gap-2">
                 <StickyNote className="h-4 w-4" />
                 <h3 className="font-semibold text-sm">错题笔记</h3>
@@ -1050,7 +1051,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
             </div>
 
             <Tabs defaultValue="question" className="flex-1 min-h-0 w-full max-w-full">
-              <div className="hidden md:block p-3 border-b">
+              <div className="hidden lg:block p-3 border-b">
                 <TabsList>
                   <TabsTrigger value="question" className="text-xs">题目</TabsTrigger>
                   <TabsTrigger value="note" className="text-xs">笔记</TabsTrigger>
@@ -1135,7 +1136,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
                       </div>
                     )}
 
-                    <div className="md:hidden space-y-2 w-full">
+                    <div className="lg:hidden space-y-2 w-full">
                       <div className="flex items-center justify-between gap-2">
                         <label className="text-xs font-medium text-muted-foreground">
                           笔记内容
@@ -1176,13 +1177,13 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
                       {new Date(selectedItem.createdAt).toLocaleDateString()}
                     </div>
 
-                    <div className="md:hidden">
+                    <div className="lg:hidden">
                       <ReviewMetaPanel item={selectedItem} onUpdate={updateQuestionReviewMeta} />
                     </div>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="note" className="p-0 hidden md:block w-full">
+                <TabsContent value="note" className="p-0 hidden lg:block w-full">
                   <div className="p-4 space-y-4 w-full">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-2">
@@ -1233,7 +1234,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
                   </div>
                 </TabsContent>
 
-                <TabsContent value="review" className="p-0 hidden md:block w-full">
+                <TabsContent value="review" className="p-0 hidden lg:block w-full">
                   <div className="p-4">
                     <ReviewMetaPanel item={selectedItem} onUpdate={updateQuestionReviewMeta} />
                   </div>
@@ -1252,7 +1253,7 @@ export function WrongAnswerNotebook({ onJumpToNode, onStartReasonPractice }: Wro
               variant="outline"
               size="sm"
               onClick={() => setShowDrawer(true)}
-              className="mt-3 sm:mt-4 md:hidden"
+              className="mt-3 sm:mt-4 lg:hidden"
             >
               <ListTodo className="h-3 w-3 mr-1" />
               打开错题列表

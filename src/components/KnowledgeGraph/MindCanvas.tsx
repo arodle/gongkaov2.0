@@ -1,4 +1,4 @@
-﻿﻿﻿﻿'use client';
+'use client';
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -78,6 +78,14 @@ interface ResizeState {
   startHeight: number;
 }
 
+interface TouchGestureState {
+  mode: 'pan' | 'pinch';
+  startCenter: { x: number; y: number };
+  startDistance: number;
+  startScale: number;
+  startPosition: { x: number; y: number };
+}
+
 type LayoutDirection = 'right' | 'left' | 'both' | 'down';
 type EdgeStyle = 'curve' | 'straight' | 'elbow';
 type FocusFilterMode = 'all' | 'weak' | 'frequent';
@@ -92,6 +100,8 @@ const DEFAULT_MIND_CANVAS_SETTINGS: MindCanvasLocalSettings = {
 const MINI_MAP_WIDTH = 220;
 const MINI_MAP_HEIGHT = 140;
 const EDGE_COLORS = ['#64748B', '#2563EB', '#DC2626', '#059669', '#D97706'];
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 3;
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; dot: string; hoverBg: string }> = {
   subject: { bg: '#F0F6FF', border: '#3B82F6', text: '#1E40AF', dot: '#3B82F6', hoverBg: '#DBEAFE' },
@@ -151,6 +161,31 @@ function formatLastPractice(dateText: string | null): string {
   return `${Math.floor(days)} \u5929\u672a\u7ec3`;
 }
 
+type TouchListLike = {
+  length: number;
+  [index: number]: React.Touch;
+};
+
+function getTouchCenter(touches: TouchListLike) {
+  const first = touches[0];
+  const second = touches[1] || touches[0];
+  return {
+    x: (first.clientX + second.clientX) / 2,
+    y: (first.clientY + second.clientY) / 2,
+  };
+}
+
+function getTouchDistance(touches: TouchListLike) {
+  if (touches.length < 2) return 0;
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function shouldIgnoreCanvasTouch(target: EventTarget | null) {
+  return Boolean((target as HTMLElement | null)?.closest('button, input, textarea, select, [data-canvas-control]'));
+}
+
 interface MindCanvasLocalSettings {
   layoutDirection: LayoutDirection;
   edgeStyle: EdgeStyle;
@@ -173,6 +208,7 @@ export function MindCanvas({
   const settingsReadyMapIdRef = useRef<string | null>(null);
   const lastSavedSettingsJsonRef = useRef('');
   const previousLayoutDirectionRef = useRef<LayoutDirection | null>(null);
+  const touchGestureRef = useRef<TouchGestureState | null>(null);
   
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -831,8 +867,8 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     // 使用平滑缩放系数，让滚轮缩放更稳定。
     const zoomFactor = 1.15;
     const nextScale = e.deltaY < 0 
-      ? Math.min(3.0, scale * zoomFactor) 
-      : Math.max(0.2, scale / zoomFactor);
+      ? Math.min(MAX_SCALE, scale * zoomFactor) 
+      : Math.max(MIN_SCALE, scale / zoomFactor);
 
     if (nextScale === scale) return;
 
@@ -876,8 +912,96 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     setResizeState(null);
   }, []);
 
-  const handleZoomIn = useCallback(() => setScale(s => Math.min(3, s * 1.2)), []);
-  const handleZoomOut = useCallback(() => setScale(s => Math.max(0.2, s / 1.2)), []);
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!containerRef.current || shouldIgnoreCanvasTouch(e.target)) return;
+
+    if (e.touches.length >= 2) {
+      e.preventDefault();
+      setIsDragging(false);
+      const rect = containerRef.current.getBoundingClientRect();
+      const center = getTouchCenter(e.touches);
+      touchGestureRef.current = {
+        mode: 'pinch',
+        startCenter: { x: center.x - rect.left, y: center.y - rect.top },
+        startDistance: getTouchDistance(e.touches),
+        startScale: scale,
+        startPosition: position,
+      };
+      return;
+    }
+
+    const target = e.target as HTMLElement;
+    if (target.closest('.mindmap-node')) return;
+
+    const touch = e.touches[0];
+    if (!touch) return;
+    e.preventDefault();
+    touchGestureRef.current = {
+      mode: 'pan',
+      startCenter: { x: touch.clientX, y: touch.clientY },
+      startDistance: 0,
+      startScale: scale,
+      startPosition: position,
+    };
+    setIsDragging(true);
+  }, [position, scale]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    const gesture = touchGestureRef.current;
+    if (!gesture || !containerRef.current) return;
+    e.preventDefault();
+
+    if (gesture.mode === 'pinch' && e.touches.length >= 2) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const center = getTouchCenter(e.touches);
+      const centerX = center.x - rect.left;
+      const centerY = center.y - rect.top;
+      const distance = getTouchDistance(e.touches);
+      const nextScale = Math.max(
+        MIN_SCALE,
+        Math.min(MAX_SCALE, gesture.startScale * (distance / Math.max(gesture.startDistance, 1)))
+      );
+      const scaleRatio = nextScale / gesture.startScale;
+
+      setScale(nextScale);
+      setPosition({
+        x: centerX - (gesture.startCenter.x - gesture.startPosition.x) * scaleRatio,
+        y: centerY - (gesture.startCenter.y - gesture.startPosition.y) * scaleRatio,
+      });
+      return;
+    }
+
+    if (gesture.mode === 'pan' && e.touches.length === 1) {
+      const touch = e.touches[0];
+      setPosition({
+        x: gesture.startPosition.x + touch.clientX - gesture.startCenter.x,
+        y: gesture.startPosition.y + touch.clientY - gesture.startCenter.y,
+      });
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 0) {
+      touchGestureRef.current = null;
+      setIsDragging(false);
+      return;
+    }
+
+    if (e.touches.length === 1 && touchGestureRef.current?.mode === 'pinch') {
+      const touch = e.touches[0];
+      touchGestureRef.current = {
+        mode: 'pan',
+        startCenter: { x: touch.clientX, y: touch.clientY },
+        startDistance: 0,
+        startScale: scale,
+        startPosition: position,
+      };
+      setIsDragging(true);
+    }
+  }, [position, scale]);
+
+  const handleZoomIn = useCallback(() => setScale(s => Math.min(MAX_SCALE, s * 1.2)), []);
+  const handleZoomOut = useCallback(() => setScale(s => Math.max(MIN_SCALE, s / 1.2)), []);
   const handleFitView = useCallback(() => {
     if (!containerRef.current || calculateNodePositions.size === 0) {
       setScale(1);
@@ -1137,7 +1261,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       <div 
         ref={containerRef}
         className={cn(
-          "relative h-full w-full overflow-hidden bg-slate-50 select-none shadow-inner dark:from-slate-900 dark:to-slate-800 md:rounded-xl md:border md:border-slate-200/60",
+          "relative h-full w-full touch-none overflow-hidden bg-slate-50 select-none shadow-inner dark:from-slate-900 dark:to-slate-800 md:rounded-xl md:border md:border-slate-200/60",
           isDragging ? 'cursor-grabbing' : 'cursor-default'
         )}
         onWheel={handleWheel}
@@ -1145,6 +1269,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       >
         <div className="pointer-events-none absolute left-2 right-2 top-2 z-30 flex items-start justify-between gap-3 md:left-4 md:right-4 md:top-4">
           <div className="pointer-events-auto w-full rounded-lg border border-slate-200/80 bg-white/88 p-2 shadow-sm backdrop-blur-md md:max-w-[54rem]">
@@ -1475,7 +1603,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       {hasChild && (
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleExpand(node.id); }}
-                          className="p-0.5 hover:bg-slate-200/50 rounded-md transition-colors flex-shrink-0 mt-0.5"
+                          className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-colors hover:bg-slate-200/50"
                         >
                           {expanded ? (
                             <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
@@ -1536,7 +1664,10 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                     <button
                       type="button"
                       aria-label="进入节点练习"
-                      className="absolute bottom-1.5 left-2 h-6 w-6 rounded-md bg-white/85 text-slate-500 opacity-0 shadow-sm transition-opacity hover:text-blue-600 group-hover:opacity-100"
+                      className={cn(
+                        "absolute bottom-1.5 left-2 h-8 w-8 rounded-md bg-white/90 text-slate-500 opacity-0 shadow-sm transition-opacity hover:text-blue-600 group-hover:opacity-100",
+                        selected && "opacity-100"
+                      )}
                       onClick={(e) => {
                         e.stopPropagation();
                         onTargetedPractice(legacyNodeId);
@@ -1549,7 +1680,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                     type="button"
                     aria-label="调整节点大小"
                     className={cn(
-                      "absolute bottom-0 right-0 h-7 w-7 cursor-nwse-resize rounded-br-xl rounded-tl-md opacity-0 transition-opacity",
+                      "absolute bottom-0 right-0 h-9 w-9 cursor-nwse-resize rounded-br-xl rounded-tl-md opacity-0 transition-opacity",
                       "bg-white/80 hover:bg-blue-50 group-hover:opacity-100",
                       (selected || resizeState?.nodeId === node.id) && "opacity-100"
                     )}
@@ -1564,10 +1695,16 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
         </div>
 
         {/* 左上角浮动控制台 */}
+        <div className="pointer-events-none absolute inset-x-3 bottom-20 z-20 flex justify-center md:hidden">
+          <div className="rounded-full border border-slate-200 bg-white/92 px-3 py-1.5 text-[11px] font-medium text-slate-500 shadow-sm backdrop-blur">
+            单指拖动画布 · 双指缩放 · 点节点查看详情
+          </div>
+        </div>
+
         <div className="absolute top-28 left-4 flex flex-col gap-1.5 z-20">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button size="icon" variant="secondary" onClick={handleZoomIn} className="w-9 h-9 bg-white/90 border border-slate-200 shadow-sm hover:bg-white rounded-lg">
+              <Button size="icon" variant="secondary" onClick={handleZoomIn} className="h-10 w-10 rounded-lg border border-slate-200 bg-white/90 shadow-sm hover:bg-white md:h-9 md:w-9">
                 <ZoomIn className="w-4 h-4 text-slate-600" />
               </Button>
             </TooltipTrigger>
@@ -1575,7 +1712,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button size="icon" variant="secondary" onClick={handleZoomOut} className="w-9 h-9 bg-white/90 border border-slate-200 shadow-sm hover:bg-white rounded-lg">
+              <Button size="icon" variant="secondary" onClick={handleZoomOut} className="h-10 w-10 rounded-lg border border-slate-200 bg-white/90 shadow-sm hover:bg-white md:h-9 md:w-9">
                 <ZoomOut className="w-4 h-4 text-slate-600" />
               </Button>
             </TooltipTrigger>
@@ -1583,7 +1720,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button size="icon" variant="secondary" onClick={handleFitView} className="w-9 h-9 bg-white/90 border border-slate-200 shadow-sm hover:bg-white rounded-lg">
+              <Button size="icon" variant="secondary" onClick={handleFitView} className="h-10 w-10 rounded-lg border border-slate-200 bg-white/90 shadow-sm hover:bg-white md:h-9 md:w-9">
                 <Maximize2 className="w-4 h-4 text-slate-600" />
               </Button>
             </TooltipTrigger>

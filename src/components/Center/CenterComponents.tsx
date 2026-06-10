@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/stores/appStore';
 import { backupService } from '@/lib/services/backupService';
 import { getRecentDeletions, removeRecentDeletion, type RecentDeletionItem } from '@/lib/recent-deletions';
@@ -472,7 +473,7 @@ export function RecentDeletionPanel() {
       }
     } catch (error) {
       console.error('Failed to restore recent deletion:', error);
-      window.alert('恢复失败，请稍后重试。');
+      toast.error('恢复失败，请稍后重试');
     } finally {
       setIsRestoring(null);
     }

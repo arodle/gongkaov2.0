@@ -366,12 +366,12 @@ function AppContent() {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-background text-foreground">
-      <aside className="hidden w-[236px] shrink-0 border-r border-[#eee7ff] bg-white/92 shadow-[8px_0_28px_rgba(76,68,128,0.04)] md:flex md:flex-col">
-        <div className="flex h-16 items-center gap-3 border-b border-border/70 px-4">
+      <aside className="hidden w-[76px] shrink-0 border-r border-[#eee7ff] bg-white/92 shadow-[8px_0_28px_rgba(76,68,128,0.04)] md:flex md:flex-col lg:w-[236px]">
+        <div className="flex h-16 items-center justify-center gap-3 border-b border-border/70 px-3 lg:justify-start lg:px-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white shadow-[0_12px_28px_rgba(20,184,166,0.22)]">
             <GitBranch className="h-5 w-5" />
           </div>
-          <div className="min-w-0">
+          <div className="hidden min-w-0 lg:block">
             <div className="truncate text-sm font-semibold text-foreground">公考学习工作台</div>
             <div className="text-xs text-muted-foreground">MindCanvas</div>
           </div>
@@ -381,7 +381,7 @@ function AppContent() {
           <nav className="space-y-5 p-3">
             {Array.from(new Set(tabs.map(tab => tab.group))).map(group => (
               <div key={group}>
-                <div className="px-2 pb-1.5 text-[11px] font-medium text-muted-foreground/70">{group}</div>
+                <div className="hidden px-2 pb-1.5 text-[11px] font-medium text-muted-foreground/70 lg:block">{group}</div>
                 <div className="space-y-1">
                   {tabs.filter(tab => tab.group === group).map((tab) => {
                     const Icon = tab.icon;
@@ -392,16 +392,16 @@ function AppContent() {
                         type="button"
                         onClick={() => setActiveTab(tab.id)}
                         className={cn(
-                          'flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors',
+                          'flex h-9 w-full items-center justify-center gap-2 rounded-lg px-2 text-left text-sm transition-colors lg:justify-start',
                           isActive
                             ? 'liquid-active text-white'
                             : 'text-muted-foreground hover:bg-[#f4efff]/80 hover:text-foreground',
                         )}
                       >
                         <Icon className="h-4 w-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{tab.label}</span>
+                        <span className="hidden min-w-0 flex-1 truncate lg:block">{tab.label}</span>
                         {tab.id === 'mindmap' && weakCount > 0 && (
-                          <span className={cn('rounded px-1.5 py-0.5 text-[10px]', isActive ? 'bg-white/15 text-white' : 'bg-red-50 text-red-600')}>
+                          <span className={cn('absolute ml-7 mt-[-1.25rem] rounded px-1 py-0.5 text-[9px] lg:static lg:ml-0 lg:mt-0 lg:px-1.5 lg:text-[10px]', isActive ? 'bg-white/15 text-white' : 'bg-red-50 text-red-600')}>
                             {weakCount}
                           </span>
                         )}
@@ -414,7 +414,7 @@ function AppContent() {
           </nav>
         </ScrollArea>
 
-        <div className="border-t border-border/70 p-3">
+        <div className="hidden border-t border-border/70 p-3 lg:block">
           <div className="liquid-control grid grid-cols-3 gap-1 rounded-xl p-2 text-center">
             <div>
               <div className="text-sm font-semibold">{nodes.length}</div>
@@ -444,7 +444,7 @@ function AppContent() {
                   </Badge>
                 )}
               </div>
-              <p className="hidden truncate text-xs text-muted-foreground md:block">{activeTabMeta.description}</p>
+              <p className="hidden truncate text-xs text-muted-foreground lg:block">{activeTabMeta.description}</p>
             </div>
 
             {activeTab === 'mindmap' && (
@@ -473,7 +473,7 @@ function AppContent() {
             )}
           </div>
 
-          <div className="hidden items-center gap-2 px-5 md:flex">
+          <div className="hidden items-center gap-2 px-2 md:flex lg:px-5">
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className={cn(
@@ -522,8 +522,8 @@ function AppContent() {
         </header>
 
         <main className={cn(
-          "min-h-0 flex-1 overflow-hidden bg-transparent p-0 md:p-3",
-          !isPracticeActive && "pb-16 md:pb-3"
+          "min-h-0 flex-1 overflow-hidden bg-transparent p-0 md:p-2 lg:p-3",
+          !isPracticeActive && "pb-16 md:pb-2 lg:pb-3"
         )}>
           <div className="h-full min-h-0 overflow-hidden bg-white shadow-[0_12px_36px_rgba(76,68,128,0.06)] md:rounded-xl md:border md:border-[#eee7ff]">
         <AnimatePresence mode="wait">

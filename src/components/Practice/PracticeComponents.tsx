@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/stores/appStore';
 import type { BehaviorEventRecord, BehaviorEventType, QuestionBankItem } from '@/types';
 import { normalizeBehaviorEvent } from '@/lib/behavior-events';
@@ -886,7 +887,7 @@ export function PracticeSession({ questions, mode, answerMode = 'instant', sessi
     const unanswered = questions.some((_, i) => !userAnswers[i]);
     if (unanswered) {
       setIsRunning(true);
-      alert('请完成所有题目再提交！');
+      toast.warning('请完成所有题目再提交');
       return;
     }
 

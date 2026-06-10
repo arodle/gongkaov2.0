@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   Bold,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   Edit3,
   Eye,
   FileText,
+  GripVertical,
   Heading2,
   Highlighter,
   ImagePlus,
@@ -35,6 +37,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
@@ -54,6 +66,20 @@ interface MindEditorProps {
 interface TreeNode {
   node: MapNodeRecord;
   children: TreeNode[];
+}
+
+interface ConfirmState {
+  title: string;
+  description: React.ReactNode;
+  confirmLabel?: string;
+  onConfirm: () => void;
+}
+
+type DropPosition = 'before' | 'inside' | 'after' | 'root';
+
+interface DropIndicator {
+  targetId: string | null;
+  position: DropPosition;
 }
 
 function buildTree(nodes: MapNodeRecord[]): TreeNode[] {
@@ -147,6 +173,72 @@ function createNodeRecord(mindMapId: string, parentId: string | null, name: stri
   };
 }
 
+function shouldIgnoreRowDrag(target: EventTarget | null) {
+  return Boolean((target as HTMLElement | null)?.closest('input, textarea, select, [data-no-row-drag]'));
+}
+
+function getDropIndicatorFromPoint(clientX: number, clientY: number): DropIndicator {
+  const el = document.elementFromPoint(clientX, clientY);
+  const row = el?.closest('[data-node-id]') as HTMLElement | null;
+
+  if (!row?.dataset.nodeId) {
+    return { targetId: null, position: 'root' };
+  }
+
+  const rect = row.getBoundingClientRect();
+  const y = clientY - rect.top;
+  const topZone = rect.height * 0.28;
+  const bottomZone = rect.height * 0.72;
+
+  if (y < topZone) return { targetId: row.dataset.nodeId, position: 'before' };
+  if (y > bottomZone) return { targetId: row.dataset.nodeId, position: 'after' };
+  return { targetId: row.dataset.nodeId, position: 'inside' };
+}
+
+function moveNodeWithinTree(
+  currentNodes: MapNodeRecord[],
+  nodeId: string,
+  nextParentId: string | null,
+  nextIndex?: number,
+) {
+  const movingNode = currentNodes.find(node => node.id === nodeId);
+  if (!movingNode) return currentNodes;
+  if (nodeId === nextParentId) return currentNodes;
+  if (nextParentId && isDescendant(currentNodes, nodeId, nextParentId)) return currentNodes;
+
+  const normalized = currentNodes.map(node => ({ ...node }));
+  const affectedParentIds = new Set<string | null>([movingNode.parent_id, nextParentId]);
+  const siblingsAtTarget = normalized
+    .filter(node => node.id !== nodeId && node.parent_id === nextParentId)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const insertIndex = Math.max(0, Math.min(nextIndex ?? siblingsAtTarget.length, siblingsAtTarget.length));
+  const now = new Date().toISOString();
+
+  return normalized.map(node => {
+    if (node.id === nodeId) {
+      return {
+        ...node,
+        parent_id: nextParentId,
+        sort_order: insertIndex,
+        node_type: nextParentId ? 'topic' : 'subject',
+        updated_at: now,
+      };
+    }
+
+    if (!affectedParentIds.has(node.parent_id)) return node;
+
+    const siblings = normalized
+      .filter(item => item.id !== nodeId && item.parent_id === node.parent_id)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const siblingIndex = siblings.findIndex(item => item.id === node.id);
+    const orderOffset = node.parent_id === nextParentId && siblingIndex >= insertIndex ? 1 : 0;
+
+    return siblingIndex >= 0
+      ? { ...node, sort_order: siblingIndex + orderOffset }
+      : node;
+  });
+}
+
 export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges: initialEdges, onSave, onTargetedPractice }: MindEditorProps) {
   const practiceRecords = useAppStore(state => state.practiceRecords);
   const [mindMap, setMindMap] = useState<MindMapRecord | null>(initialMindMap || null);
@@ -157,7 +249,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [touchDragNodeId, setTouchDragNodeId] = useState<string | null>(null);
-  const [touchDropTargetId, setTouchDropTargetId] = useState<string | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
   const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [isLoading, setIsLoading] = useState(!initialNodes?.length);
   const [isSaving, setIsSaving] = useState(false);
@@ -166,6 +258,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [deletedEdgeIds, setDeletedEdgeIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<Array<{ nodes: MapNodeRecord[]; edges: MapEdgeRecord[]; deletedNodeIds: string[]; deletedEdgeIds: string[] }>>([]);
   const [showManual, setShowManual] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
   const [isTextEditorCollapsed, setIsTextEditorCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
@@ -236,6 +329,13 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     setSelectedNodeId(node.id);
     expandPathToNode(node.id);
     setMobilePane('canvas');
+  }, [expandPathToNode]);
+
+  const startTitleEdit = useCallback((node: MapNodeRecord) => {
+    setSelectedNodeId(node.id);
+    expandPathToNode(node.id);
+    setEditingNodeId(node.id);
+    setEditingTitle(node.name);
   }, [expandPathToNode]);
 
   const toggleNode = useCallback((nodeId: string) => {
@@ -320,7 +420,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     if (!imageFiles.length) return;
     const oversizedFiles = imageFiles.filter(file => file.size > 2 * 1024 * 1024);
     if (oversizedFiles.length > 0) {
-      window.alert('截图过大，请先压缩到 2MB 以内再插入。');
+      toast.warning('截图过大，请先压缩到 2MB 以内再插入');
       return;
     }
 
@@ -450,16 +550,16 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     }
 
     setNodes(prev => {
-      const nextNodes = prev.map(node => (
-        node.id === nodeId
-          ? { ...node, parent_id: nextParentId, updated_at: new Date().toISOString() }
-          : node
-      ));
+      const childCount = prev.filter(node => node.id !== nodeId && node.parent_id === nextParentId).length;
+      const nextNodes = moveNodeWithinTree(prev, nodeId, nextParentId, childCount);
       setEdges(rebuildParentEdges(mindMap?.id || 'default', nextNodes));
       return nextNodes;
     });
+    if (nextParentId) {
+      setExpandedNodes(prev => new Set([...prev, nextParentId]));
+    }
     setHasChanges(true);
-  }, [mindMap, nodes]);
+  }, [mindMap, nodes, pushUndo]);
 
   const deleteNode = useCallback((nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId);
@@ -470,52 +570,58 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     const relatedPracticeCount = practiceRecords.filter(record => (
       record.source_node_ids.some(id => ids.has(id) || legacyIds.has(id))
     )).length;
-    const confirmed = window.confirm([
-      `删除「${node.name}」及其 ${ids.size - 1} 个子节点？`,
-      `关联练习/错题记录：${relatedPracticeCount} 条`,
-      '',
-      '删除后报告、错题本和靶向练习可能出现引用缺口。确认继续？',
-    ].join('\n'));
-    if (!confirmed) return;
+    setConfirmState({
+      title: `删除「${node.name}」`,
+      description: (
+        <div className="space-y-1 text-left">
+          <p>将删除该节点及其 {ids.size - 1} 个子节点。</p>
+          <p>关联练习/错题记录：{relatedPracticeCount} 条。</p>
+          <p>删除后报告、错题本和靶向练习可能出现引用缺口。</p>
+        </div>
+      ),
+      confirmLabel: '删除节点',
+      onConfirm: () => {
+        pushUndo();
 
-    pushUndo();
+        const deletedNodes = nodes.filter(item => ids.has(item.id));
+        const deletedEdges = edges.filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id));
+        saveRecentDeletion({
+          kind: 'mindmap-nodes',
+          title: node.name,
+          summary: `${deletedNodes.length} 个节点，${deletedEdges.length} 条连线`,
+          payload: {
+            mindMapId: mindMap?.id,
+            nodes: deletedNodes,
+            edges: deletedEdges,
+          },
+        });
 
-    const deletedNodes = nodes.filter(item => ids.has(item.id));
-    const deletedEdges = edges.filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id));
-    saveRecentDeletion({
-      kind: 'mindmap-nodes',
-      title: node.name,
-      summary: `${deletedNodes.length} 个节点，${deletedEdges.length} 条连线`,
-      payload: {
-        mindMapId: mindMap?.id,
-        nodes: deletedNodes,
-        edges: deletedEdges,
+        setNodes(prev => {
+          const nextNodes = prev.filter(item => !ids.has(item.id));
+          setEdges(rebuildParentEdges(mindMap?.id || 'default', nextNodes));
+          return nextNodes;
+        });
+        setDeletedNodeIds(prev => Array.from(new Set([...prev, ...ids])));
+        setDeletedEdgeIds(prev => {
+          const removedEdgeIds = edges
+            .filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id))
+            .map(edge => edge.id);
+          return Array.from(new Set([...prev, ...removedEdgeIds]));
+        });
+        setExpandedNodes(prev => {
+          const next = new Set(prev);
+          ids.forEach(id => next.delete(id));
+          return next;
+        });
+        if (selectedNodeId && ids.has(selectedNodeId)) {
+          setSelectedNodeId(null);
+        }
+        setEditingNodeId(null);
+        setHasChanges(true);
+        toast.success('节点已删除，可在个人中心最近删除中尝试恢复');
       },
     });
-
-    setNodes(prev => {
-      const nextNodes = prev.filter(item => !ids.has(item.id));
-      setEdges(rebuildParentEdges(mindMap?.id || 'default', nextNodes));
-      return nextNodes;
-    });
-    setDeletedNodeIds(prev => Array.from(new Set([...prev, ...ids])));
-    setDeletedEdgeIds(prev => {
-      const removedEdgeIds = edges
-        .filter(edge => ids.has(edge.source_node_id) || ids.has(edge.target_node_id))
-        .map(edge => edge.id);
-      return Array.from(new Set([...prev, ...removedEdgeIds]));
-    });
-    setExpandedNodes(prev => {
-      const next = new Set(prev);
-      ids.forEach(id => next.delete(id));
-      return next;
-    });
-    if (selectedNodeId && ids.has(selectedNodeId)) {
-      setSelectedNodeId(null);
-    }
-    setEditingNodeId(null);
-    setHasChanges(true);
-  }, [edges, mindMap, nodes, practiceRecords, selectedNodeId]);
+  }, [edges, mindMap, nodes, practiceRecords, pushUndo, selectedNodeId]);
 
   const handleCanvasNodesChange = useCallback((nextNodes: MapNodeRecord[]) => {
     setNodes(prev => {
@@ -561,7 +667,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     if (!mindMap) return;
 
     setIsSaving(true);
-    try {
+    const savePromise = (async () => {
       const currentEdges = rebuildParentEdges(mindMap.id, nodes);
       const response = await fetch('/api/mindmap', {
         method: 'PUT',
@@ -585,92 +691,119 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       setDeletedEdgeIds([]);
       setHasChanges(false);
       onSave?.({ mindMap, nodes, edges: currentEdges });
+    })();
+
+    toast.promise(savePromise, {
+      loading: '正在保存 Mind 编辑内容...',
+      success: 'Mind 编辑内容已保存',
+      error: (error: unknown) => error instanceof Error ? error.message : '保存失败',
+    });
+
+    try {
+      await savePromise;
     } finally {
       setIsSaving(false);
     }
   }, [deletedEdgeIds, deletedNodeIds, mindMap, nodes, onSave]);
 
-  const handleRowPointerDown = useCallback((nodeId: string) => (e: React.PointerEvent) => {
-    // Don't start drag on buttons
-    const target = e.target as HTMLElement;
-    if (target.closest('button')) return;
-    e.preventDefault();
+  const handleRowDragStart = useCallback((nodeId: string) => (e: React.PointerEvent) => {
+    if (shouldIgnoreRowDrag(e.target)) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     setDragStartPos({ x: e.clientX, y: e.clientY, nodeId });
+    setDropIndicator(null);
   }, []);
 
   const handleContainerDragMove = useCallback((e: React.PointerEvent) => {
-    // If we have a pending drag that hasn't started yet
+    let activeDragNodeId = touchDragNodeId;
+
     if (dragStartPos && !touchDragNodeId) {
       const dx = Math.abs(e.clientX - dragStartPos.x);
       const dy = Math.abs(e.clientY - dragStartPos.y);
-      if (dx > 5 || dy > 5) {
-        // Start actual drag
-        setTouchDragNodeId(dragStartPos.nodeId);
-        setTouchDropTargetId(null);
-        const node = nodes.find(n => n.id === dragStartPos.nodeId);
-        if (node) selectNode(node);
-      }
-      return;
-    }
 
-    if (!touchDragNodeId) return;
-    e.preventDefault();
+      const dragThreshold = e.pointerType === 'touch' ? 10 : 5;
+      if (dx <= dragThreshold && dy <= dragThreshold) return;
 
-    // Find the row element under the pointer
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const row = el?.closest('[data-node-id]') as HTMLElement | null;
-    const targetId = row?.dataset.nodeId || null;
-
-    if (targetId && targetId !== touchDragNodeId) {
-      setTouchDropTargetId(targetId);
-    } else {
-      setTouchDropTargetId(null);
-    }
-  }, [dragStartPos, touchDragNodeId, nodes]);
-
-  const handleContainerDragEnd = useCallback((e: React.PointerEvent) => {
-    // If it was a click (no drag started), select the node
-    if (dragStartPos && !touchDragNodeId) {
+      e.preventDefault();
+      activeDragNodeId = dragStartPos.nodeId;
+      setTouchDragNodeId(activeDragNodeId);
       const node = nodes.find(n => n.id === dragStartPos.nodeId);
       if (node) selectNode(node);
+    }
+
+    if (!activeDragNodeId) return;
+    e.preventDefault();
+
+    const nextIndicator = getDropIndicatorFromPoint(e.clientX, e.clientY);
+    if (nextIndicator.targetId === activeDragNodeId) {
+      setDropIndicator(null);
+      return;
+    }
+
+    if (
+      nextIndicator.targetId
+      && nextIndicator.position === 'inside'
+      && isDescendant(nodes, activeDragNodeId, nextIndicator.targetId)
+    ) {
+      setDropIndicator(null);
+      return;
+    }
+
+    setDropIndicator(nextIndicator);
+  }, [dragStartPos, nodes, selectNode, touchDragNodeId]);
+
+  const handleContainerDragEnd = useCallback((e: React.PointerEvent) => {
+    if (dragStartPos && !touchDragNodeId) {
       setDragStartPos(null);
+      setDropIndicator(null);
       return;
     }
 
     if (!touchDragNodeId) return;
 
-    // Final check: what's under the pointer right now?
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const row = el?.closest('[data-node-id]') as HTMLElement | null;
-    const targetId = row?.dataset.nodeId || null;
+    const indicator = dropIndicator || getDropIndicatorFromPoint(e.clientX, e.clientY);
+    const draggedNode = nodes.find(node => node.id === touchDragNodeId);
 
-    if (targetId && targetId !== touchDragNodeId) {
-      const draggedNode = nodes.find(n => n.id === touchDragNodeId);
-      const targetNode = nodes.find(n => n.id === targetId);
-      if (draggedNode && targetNode) {
-        const sameParent = draggedNode.parent_id === targetNode.parent_id;
-        const bothRoots = !draggedNode.parent_id && !targetNode.parent_id;
-        if (sameParent && !bothRoots) {
-          pushUndo();
-          const targetOrder = targetNode.sort_order ?? 0;
-          setNodes(prev => prev.map(n => {
-            if (n.id === touchDragNodeId) return { ...n, sort_order: targetOrder + 1, updated_at: new Date().toISOString() };
-            if (n.parent_id === draggedNode.parent_id && (n.sort_order ?? 0) > targetOrder && n.id !== touchDragNodeId) return { ...n, sort_order: (n.sort_order ?? 0) + 1 };
-            return n;
-          }));
-          setHasChanges(true);
-        } else {
-          moveNode(touchDragNodeId, targetId);
+    if (draggedNode && !(indicator.targetId === touchDragNodeId)) {
+      const targetNode = indicator.targetId ? nodes.find(node => node.id === indicator.targetId) : null;
+      let nextParentId: string | null = null;
+      let nextIndex: number | undefined;
+
+      if (indicator.position === 'root' || !targetNode) {
+        nextParentId = null;
+        nextIndex = nodes.filter(node => node.id !== touchDragNodeId && !node.parent_id).length;
+      } else if (indicator.position === 'inside') {
+        if (!isDescendant(nodes, touchDragNodeId, targetNode.id)) {
+          nextParentId = targetNode.id;
+          nextIndex = nodes.filter(node => node.id !== touchDragNodeId && node.parent_id === targetNode.id).length;
         }
+      } else {
+        nextParentId = targetNode.parent_id;
+        const siblings = nodes
+          .filter(node => node.id !== touchDragNodeId && node.parent_id === nextParentId)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+        const targetIndex = siblings.findIndex(node => node.id === targetNode.id);
+        nextIndex = targetIndex < 0 ? siblings.length : targetIndex + (indicator.position === 'after' ? 1 : 0);
       }
-    } else if (!targetId) {
-      moveNode(touchDragNodeId, null);
+
+      const nextNodes = moveNodeWithinTree(nodes, touchDragNodeId, nextParentId, nextIndex);
+      if (nextNodes !== nodes) {
+        pushUndo();
+        if (draggedNode.parent_id && draggedNode.parent_id !== nextParentId) {
+          setDeletedEdgeIds(prev => Array.from(new Set([...prev, `me_${draggedNode.parent_id}_${touchDragNodeId}`])));
+        }
+        setNodes(nextNodes);
+        setEdges(rebuildParentEdges(mindMap?.id || 'default', nextNodes));
+        if (nextParentId) {
+          setExpandedNodes(prev => new Set([...prev, nextParentId]));
+        }
+        setHasChanges(true);
+      }
     }
 
     setTouchDragNodeId(null);
-    setTouchDropTargetId(null);
     setDragStartPos(null);
-  }, [dragStartPos, touchDragNodeId, nodes, moveNode, pushUndo]);
+    setDropIndicator(null);
+  }, [dragStartPos, dropIndicator, mindMap, nodes, pushUndo, touchDragNodeId]);
 
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
@@ -678,23 +811,41 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     const isSelected = selectedNodeId === node.id;
     const isEditing = editingNodeId === node.id;
     const isTouchDragging = touchDragNodeId === node.id;
-    const isTouchDropTarget = touchDropTargetId === node.id;
+    const rowDropPosition = dropIndicator?.targetId === node.id ? dropIndicator.position : null;
 
     return (
       <div key={node.id}>
         <div
           data-node-id={node.id}
-          onPointerDown={handleRowPointerDown(node.id)}
           className={cn(
-            'group flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100 cursor-grab active:cursor-grabbing select-none',
+            'group relative flex h-10 touch-none items-center gap-1 rounded-md px-2 text-sm hover:bg-slate-100 md:h-8',
             isSelected && 'bg-blue-50 text-blue-700',
             isTouchDragging && 'opacity-40',
-            isTouchDropTarget && 'bg-blue-100 ring-2 ring-blue-400',
+            rowDropPosition === 'inside' && 'bg-blue-100 ring-2 ring-blue-400',
           )}
           style={{ paddingLeft: 8 + depth * 16 }}
+          onClick={() => selectNode(node)}
+          onPointerDown={handleRowDragStart(node.id)}
+          onDoubleClick={(event) => {
+            if (shouldIgnoreRowDrag(event.target)) return;
+            event.stopPropagation();
+            startTitleEdit(node);
+          }}
         >
+          {rowDropPosition === 'before' && (
+            <span className="pointer-events-none absolute left-2 right-2 top-0 h-0.5 rounded-full bg-blue-500" />
+          )}
+          {rowDropPosition === 'after' && (
+            <span className="pointer-events-none absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-blue-500" />
+          )}
+          <span
+            className="shrink-0 cursor-grab p-1 -ml-1 text-slate-300 group-hover:text-slate-500 active:cursor-grabbing"
+          >
+            <GripVertical className="h-4 w-4" />
+          </span>
           <button
             type="button"
+            data-no-row-drag
             className="grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-slate-200"
             onClick={(event) => {
               event.stopPropagation();
@@ -729,8 +880,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
               className="min-w-0 flex-1 truncate text-left"
               onDoubleClick={(event) => {
                 event.stopPropagation();
-                setEditingNodeId(node.id);
-                setEditingTitle(node.name);
+                startTitleEdit(node);
               }}
             >
               {node.name}
@@ -738,8 +888,23 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           )}
 
           {node.markdown && <FileText className="h-3.5 w-3.5 shrink-0 text-blue-500" />}
+          {!isEditing && (
+            <button
+              type="button"
+              data-no-row-drag
+              className="grid h-6 w-6 shrink-0 place-items-center rounded text-slate-400 opacity-0 hover:bg-blue-50 hover:text-blue-600 group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                startTitleEdit(node);
+              }}
+              aria-label="编辑节点标题"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
+            data-no-row-drag
             className="grid h-6 w-6 shrink-0 place-items-center rounded text-slate-400 opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
@@ -767,8 +932,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white md:flex-row md:rounded-xl md:border md:border-slate-200">
-      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 py-2 md:hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white lg:flex-row lg:rounded-xl lg:border lg:border-slate-200">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 py-2 lg:hidden">
         <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
           {([
             ['outline', '大纲'],
@@ -795,7 +960,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         </Button>
       </div>
-      <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 md:hidden">
+      <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 lg:hidden">
         <div className="flex items-start gap-2">
           <Monitor className="mt-0.5 h-4 w-4 shrink-0" />
           <span>Mind 编辑属于运营功能，新增节点、批量改结构和长笔记维护建议在桌面端操作。</span>
@@ -803,10 +968,10 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       </div>
 
       <aside className={cn(
-        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 md:flex md:w-[360px] md:border-r md:border-slate-200",
+        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 lg:flex lg:w-[340px] xl:w-[360px] lg:border-r lg:border-slate-200",
         mobilePane === 'outline' || mobilePane === 'text' ? 'flex' : 'hidden'
       )}>
-        <div className="hidden shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2 md:flex">
+        <div className="hidden shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2 lg:flex">
           <div className="min-w-0">
             <Input
               value={mindMap?.name || '未命名导图'}
@@ -824,8 +989,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         </div>
 
         <div className={cn(
-          "grid shrink-0 grid-cols-3 gap-1.5 border-b border-slate-200 p-2 md:gap-2 md:p-3",
-          mobilePane !== 'outline' && "hidden md:grid"
+          "grid shrink-0 grid-cols-3 gap-1.5 border-b border-slate-200 p-2 lg:gap-2 lg:p-3",
+          mobilePane !== 'outline' && "hidden lg:grid"
         )}>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode(null)} disabled={!mindMap}>
             <Plus className="h-3.5 w-3.5" />
@@ -846,14 +1011,26 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         <ScrollArea className={cn(
           "min-h-0",
           mobilePane === 'outline' ? "flex-1" : "hidden",
-          "md:block md:flex-[1_1_42%]"
+          "lg:block lg:flex-[1_1_42%]"
         )}>
           <div
-            className="p-2 min-h-[60px]"
+            className={cn(
+              "min-h-[60px] p-2",
+              touchDragNodeId && dropIndicator?.position === 'root' && "rounded-lg bg-blue-50/80 ring-2 ring-inset ring-blue-300"
+            )}
             onPointerMove={handleContainerDragMove}
             onPointerUp={handleContainerDragEnd}
-            onPointerLeave={handleContainerDragEnd}
+            onPointerCancel={() => {
+              setTouchDragNodeId(null);
+              setDragStartPos(null);
+              setDropIndicator(null);
+            }}
           >
+            {touchDragNodeId && dropIndicator?.position === 'root' && (
+              <div className="mb-2 rounded-md border border-dashed border-blue-300 bg-white/80 px-2 py-1.5 text-xs font-medium text-blue-700">
+                松手后移动为根节点
+              </div>
+            )}
             {treeData.map(root => renderNode(root, 0))}
           </div>
         </ScrollArea>
@@ -861,8 +1038,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         <div className={cn(
           "min-h-0 flex-col border-t border-slate-200 bg-white",
           mobilePane === 'text' ? "flex flex-1" : "hidden",
-          "md:flex",
-          isTextEditorCollapsed ? "md:shrink-0" : "md:flex-[1.35_1_58%]"
+          "lg:flex",
+          isTextEditorCollapsed ? "lg:shrink-0" : "lg:flex-[1.35_1_58%]"
         )}>
           <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-3 py-2">
             <div className="text-sm font-semibold text-slate-800">文本编辑器</div>
@@ -1060,17 +1237,17 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       </aside>
 
       <main className={cn(
-        "relative min-h-0 min-w-0 flex-1 bg-slate-100 md:block",
+        "relative min-h-0 min-w-0 flex-1 bg-slate-100 lg:block",
         mobilePane === 'canvas' ? "block" : "hidden"
       )}>
         <Button
           variant="secondary"
           size="icon"
-          className="absolute right-2 top-11 z-50 h-8 w-8 rounded-full bg-white/95 shadow-sm md:right-4 md:top-4 md:h-9 md:w-auto md:rounded-md md:px-3"
+          className="absolute right-2 top-11 z-50 h-8 w-8 rounded-full bg-white/95 shadow-sm lg:right-4 lg:top-4 lg:h-9 lg:w-auto lg:rounded-md lg:px-3"
           onClick={() => setShowManual(true)}
           aria-label="用户手册"
         >
-          <HelpCircle className="h-3.5 w-3.5 md:h-4 md:w-4" />
+          <HelpCircle className="h-3.5 w-3.5 lg:h-4 lg:w-4" />
           <span className="hidden sm:inline">用户手册</span>
         </Button>
         <Dialog open={showManual} onOpenChange={setShowManual}>
@@ -1130,6 +1307,30 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           onTargetedPractice={onTargetedPractice}
         />
       </main>
+
+      <AlertDialog open={!!confirmState} onOpenChange={(open) => !open && setConfirmState(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState?.title}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>{confirmState?.description}</div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const action = confirmState?.onConfirm;
+                setConfirmState(null);
+                action?.();
+              }}
+            >
+              {confirmState?.confirmLabel || '确认'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
