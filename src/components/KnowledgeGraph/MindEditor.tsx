@@ -77,6 +77,11 @@ interface ConfirmState {
 
 type DropPosition = 'before' | 'inside' | 'after' | 'root';
 
+const SIDEBAR_WIDTH_STORAGE_KEY = 'gongkao:mindEditorSidebarWidth';
+const DEFAULT_SIDEBAR_WIDTH = 360;
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 640;
+
 interface DropIndicator {
   targetId: string | null;
   position: DropPosition;
@@ -262,6 +267,10 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
   const [isTextEditorCollapsed, setIsTextEditorCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+  const editorShellRef = useRef<HTMLDivElement | null>(null);
+  const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
   const markdownTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const changeVersionRef = useRef(0);
@@ -281,6 +290,26 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     setHasChanges(false);
     changeVersionRef.current = 0;
   }, [initialMindMap, initialNodes, initialEdges]);
+
+  useEffect(() => {
+    const savedWidth = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    if (!Number.isFinite(savedWidth)) return;
+    const nextWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, savedWidth));
+    sidebarWidthRef.current = nextWidth;
+    setSidebarWidth(nextWidth);
+  }, []);
+
+  useEffect(() => {
+    if (!isSidebarResizing) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isSidebarResizing]);
 
   useEffect(() => {
     const loadMindMap = async () => {
@@ -855,6 +884,34 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     setDropIndicator(null);
   }, [dragStartPos, dropIndicator, markChanged, mindMap, nodes, pushUndo, touchDragNodeId]);
 
+  const getSidebarWidthLimit = useCallback(() => {
+    const shellWidth = editorShellRef.current?.getBoundingClientRect().width || 0;
+    if (!shellWidth) return MAX_SIDEBAR_WIDTH;
+    return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, shellWidth * 0.58));
+  }, []);
+
+  const updateSidebarWidth = useCallback((width: number, persist = false) => {
+    const nextWidth = Math.round(Math.min(getSidebarWidthLimit(), Math.max(MIN_SIDEBAR_WIDTH, width)));
+    sidebarWidthRef.current = nextWidth;
+    setSidebarWidth(nextWidth);
+    if (persist) {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
+    }
+  }, [getSidebarWidthLimit]);
+
+  const handleSidebarResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSidebarResizing || !editorShellRef.current) return;
+    const shellRect = editorShellRef.current.getBoundingClientRect();
+    updateSidebarWidth(event.clientX - shellRect.left);
+  }, [isSidebarResizing, updateSidebarWidth]);
+
+  const finishSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isSidebarResizing) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setIsSidebarResizing(false);
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthRef.current));
+  }, [isSidebarResizing]);
+
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
     const isExpanded = expandedNodes.has(node.id);
@@ -928,6 +985,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
             <button
               type="button"
               className="min-w-0 flex-1 truncate text-left"
+              title={node.name}
               onDoubleClick={(event) => {
                 event.stopPropagation();
                 startTitleEdit(node);
@@ -982,7 +1040,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white lg:flex-row lg:rounded-xl lg:border lg:border-slate-200">
+    <div ref={editorShellRef} className="flex h-full min-h-0 flex-col overflow-hidden bg-white lg:flex-row lg:rounded-xl lg:border lg:border-slate-200">
       <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 py-2 lg:hidden">
         <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
           {([
@@ -1025,9 +1083,9 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       </div>
 
       <aside className={cn(
-        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 lg:flex lg:w-[340px] xl:w-[360px] lg:border-r lg:border-slate-200",
+        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 lg:flex lg:w-[var(--mind-editor-sidebar-width)]",
         mobilePane === 'outline' || mobilePane === 'text' ? 'flex' : 'hidden'
-      )}>
+      )} style={{ '--mind-editor-sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}>
         <div className="hidden shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2 lg:flex">
           <div className="min-w-0">
             <Input
@@ -1292,6 +1350,42 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           ) : null}
         </div>
       </aside>
+
+      <div
+        role="separator"
+        aria-label="调整大纲栏宽度"
+        aria-orientation="vertical"
+        aria-valuemin={MIN_SIDEBAR_WIDTH}
+        aria-valuemax={Math.round(getSidebarWidthLimit())}
+        aria-valuenow={sidebarWidth}
+        tabIndex={0}
+        title="拖动调整大纲栏宽度，双击恢复默认宽度"
+        className={cn(
+          'group hidden w-2 shrink-0 touch-none cursor-col-resize items-stretch justify-center bg-white outline-none lg:flex',
+          'focus-visible:bg-[#f3efff]',
+          isSidebarResizing && 'bg-[#f3efff]'
+        )}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          setIsSidebarResizing(true);
+        }}
+        onPointerMove={handleSidebarResizeMove}
+        onPointerUp={finishSidebarResize}
+        onPointerCancel={finishSidebarResize}
+        onDoubleClick={() => updateSidebarWidth(DEFAULT_SIDEBAR_WIDTH, true)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          updateSidebarWidth(sidebarWidthRef.current + (event.key === 'ArrowRight' ? 24 : -24), true);
+        }}
+      >
+        <span className={cn(
+          'h-full w-px bg-slate-200 transition-colors group-hover:w-0.5 group-hover:bg-[#a49aff]',
+          isSidebarResizing && 'w-0.5 bg-[#a49aff]'
+        )} />
+      </div>
 
       <main className={cn(
         "relative min-h-0 min-w-0 flex-1 bg-slate-100 lg:block",
