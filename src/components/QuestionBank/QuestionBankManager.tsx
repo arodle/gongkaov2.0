@@ -28,8 +28,6 @@ import {
   normalizeKnowledgeNodeId,
   normalizeQuestionBinding,
   recommendKnowledgePathCandidates,
-  runKnowledgeBindingAudit,
-  type KnowledgeBindingAuditReport,
   type KnowledgeAliasEntry,
 } from '@/lib/question-binding';
 import {
@@ -153,9 +151,6 @@ interface ConfirmState {
   onConfirm: () => void | Promise<void>;
 }
 
-const BINDING_AUDIT_REPORT_STORAGE_KEY = 'gongkao:knowledgeBindingAuditReport';
-const BINDING_AUDIT_LAST_AT_STORAGE_KEY = 'gongkao:lastKnowledgeBindingAuditAt';
-const BINDING_AUDIT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const KNOWLEDGE_ALIAS_STORAGE_KEY = 'gongkao:knowledgeAliasEntries';
 const QUESTION_TYPE_PRESETS = ['言语理解', '判断推理', '数量关系', '资料分析', '常识判断'];
 
@@ -169,22 +164,6 @@ function normalizeNodeId(id?: string | null) {
   return normalizeKnowledgeNodeId(id);
 }
 
-function loadStoredBindingAuditReport(): KnowledgeBindingAuditReport | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(BINDING_AUDIT_REPORT_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveStoredBindingAuditReport(report: KnowledgeBindingAuditReport) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(BINDING_AUDIT_REPORT_STORAGE_KEY, JSON.stringify(report));
-  window.localStorage.setItem(BINDING_AUDIT_LAST_AT_STORAGE_KEY, report.generatedAt);
-}
-
 function loadCustomKnowledgeAliasEntries(): KnowledgeAliasEntry[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -196,11 +175,6 @@ function loadCustomKnowledgeAliasEntries(): KnowledgeAliasEntry[] {
   } catch {
     return [];
   }
-}
-
-function saveCustomKnowledgeAliasEntries(entries: KnowledgeAliasEntry[]) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(KNOWLEDGE_ALIAS_STORAGE_KEY, JSON.stringify(entries));
 }
 
 function normalizeExamPaperName(name?: string | null) {
@@ -256,7 +230,7 @@ function textSimilarity(left: string, right: string) {
 export function QuestionBankManager() {
   const { questionBank, nodes, answerRecords, practiceRecords, examPapers, addQuestion, updateQuestion, deleteQuestion, addExamPaper } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'real' | 'simulated' | 'binding-error' | 'similar'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'real' | 'simulated' | 'similar'>('all');
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
   const [showPaperDialog, setShowPaperDialog] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
@@ -291,10 +265,7 @@ export function QuestionBankManager() {
   const [importReadyOnly, setImportReadyOnly] = useState(false);
   const [skipDuplicateDrafts, setSkipDuplicateDrafts] = useState(true);
   const [generatingExplanationIndex, setGeneratingExplanationIndex] = useState<number | null>(null);
-  const [bindingAuditReport, setBindingAuditReport] = useState<KnowledgeBindingAuditReport | null>(() => loadStoredBindingAuditReport());
-  const [customKnowledgeAliases, setCustomKnowledgeAliases] = useState<KnowledgeAliasEntry[]>(() => loadCustomKnowledgeAliasEntries());
-  const [newKnowledgeAlias, setNewKnowledgeAlias] = useState('');
-  const [newKnowledgeAliasTarget, setNewKnowledgeAliasTarget] = useState('');
+  const [customKnowledgeAliases] = useState<KnowledgeAliasEntry[]>(() => loadCustomKnowledgeAliasEntries());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const paperInputRef = useRef<HTMLInputElement>(null);
@@ -397,26 +368,6 @@ export function QuestionBankManager() {
     };
   }, [bindingIndex, nodeLookup.pathById, resolveLinkedNode]);
 
-  const hasBindingIssue = useCallback((question: QuestionBankItem) => {
-    return inspectBinding(question).status !== 'ok';
-  }, [inspectBinding]);
-
-  const runBindingAudit = useCallback(() => {
-    const report = runKnowledgeBindingAudit(questionBank, nodes);
-    setBindingAuditReport(report);
-    saveStoredBindingAuditReport(report);
-    return report;
-  }, [nodes, questionBank]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || questionBank.length === 0 || nodes.length === 0) return;
-    const lastAuditAt = window.localStorage.getItem(BINDING_AUDIT_LAST_AT_STORAGE_KEY);
-    const lastAuditTime = lastAuditAt ? Date.parse(lastAuditAt) : 0;
-    if (!lastAuditTime || Date.now() - lastAuditTime > BINDING_AUDIT_INTERVAL_MS) {
-      runBindingAudit();
-    }
-  }, [nodes.length, questionBank.length, runBindingAudit]);
-
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     let rejected = 0;
@@ -481,16 +432,14 @@ export function QuestionBankManager() {
       );
     }
 
-    if (filterType === 'binding-error') {
-      result = result.filter(hasBindingIssue);
-    } else if (filterType === 'similar') {
+    if (filterType === 'similar') {
       result = result.filter(question => similarQuestionIds.has(question.id));
     } else if (filterType !== 'all') {
       result = result.filter(q => q.type === filterType);
     }
 
     return result;
-  }, [questionBank, searchQuery, filterType, hasBindingIssue, similarQuestionIds]);
+  }, [questionBank, searchQuery, filterType, similarQuestionIds]);
 
   const totalPages = Math.max(1, Math.ceil(filteredQuestions.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -661,26 +610,6 @@ export function QuestionBankManager() {
     });
     return recommendations;
   }, [knowledgeAliasEntries, knowledgePathsForParser, uploadedPaper]);
-
-  const handleAddKnowledgeAlias = useCallback(() => {
-    const alias = newKnowledgeAlias.trim();
-    const target = newKnowledgeAliasTarget.trim();
-    if (!alias || !target) return;
-    const next = [
-      ...customKnowledgeAliases.filter(entry => entry.alias !== alias),
-      { alias, target },
-    ];
-    setCustomKnowledgeAliases(next);
-    saveCustomKnowledgeAliasEntries(next);
-    setNewKnowledgeAlias('');
-    setNewKnowledgeAliasTarget('');
-  }, [customKnowledgeAliases, newKnowledgeAlias, newKnowledgeAliasTarget]);
-
-  const handleDeleteKnowledgeAlias = useCallback((alias: string) => {
-    const next = customKnowledgeAliases.filter(entry => entry.alias !== alias);
-    setCustomKnowledgeAliases(next);
-    saveCustomKnowledgeAliasEntries(next);
-  }, [customKnowledgeAliases]);
 
   const updateUploadedQuestion = useCallback((index: number, patch: Partial<UploadedPaperQuestion>) => {
     setUploadedPaper(prev => {
@@ -1098,33 +1027,6 @@ export function QuestionBankManager() {
     URL.revokeObjectURL(url);
   }, [filteredQuestions]);
 
-  const handleExportBindingAuditReport = useCallback(() => {
-    if (!bindingAuditReport) return;
-    const dataStr = JSON.stringify({
-      generatedAt: bindingAuditReport.generatedAt,
-      totalQuestions: bindingAuditReport.totalQuestions,
-      counts: bindingAuditReport.counts,
-      issues: bindingAuditReport.issues.map(item => ({
-        questionId: item.question.id,
-        content: item.question.content,
-        linkedAngleId: item.question.linkedAngleId,
-        linkedAngleName: item.question.linkedAngleName,
-        knowledgePath: item.question.knowledgePath,
-        status: item.inspection.status,
-        reason: item.inspection.reason,
-        normalizedId: item.inspection.normalizedId,
-        normalizedPath: item.inspection.normalizedPath,
-      })),
-    }, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `knowledge_binding_audit_${new Date(bindingAuditReport.generatedAt).toISOString().split('T')[0]}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }, [bindingAuditReport]);
-
   const handleToggleQuestionSelection = useCallback((id: string) => {
     setSelectedQuestions(prev => {
       const next = new Set(prev);
@@ -1436,16 +1338,8 @@ export function QuestionBankManager() {
     total: questionBank.length,
     real: realQuestions.length,
     simulated: simulatedQuestions.length,
-    bindingErrors: questionBank.filter(hasBindingIssue).length,
     similar: similarQuestionIds.size,
-  }), [hasBindingIssue, questionBank, realQuestions, similarQuestionIds.size, simulatedQuestions]);
-
-  const nextBindingAuditAt = useMemo(() => {
-    if (!bindingAuditReport?.generatedAt) return null;
-    const lastTime = Date.parse(bindingAuditReport.generatedAt);
-    if (!Number.isFinite(lastTime)) return null;
-    return new Date(lastTime + BINDING_AUDIT_INTERVAL_MS);
-  }, [bindingAuditReport]);
+  }), [questionBank.length, realQuestions.length, similarQuestionIds.size, simulatedQuestions.length]);
 
   return (
     <div className="h-full flex flex-col w-full overflow-x-hidden">
@@ -1461,17 +1355,12 @@ export function QuestionBankManager() {
                 <span>全部 {stats.total}</span>
                 <span>真题 {stats.real}</span>
                 <span>模拟题 {stats.simulated}</span>
-                <span className={cn(stats.bindingErrors > 0 && 'text-amber-700')}>绑定异常 {stats.bindingErrors}</span>
                 <span className={cn(stats.similar > 0 && 'text-red-700')}>相似题 {stats.similar}</span>
                 <span>筛选 {filteredQuestions.length}</span>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={runBindingAudit}>
-                <Check className="mr-1.5 h-4 w-4" />
-                绑定巡检
-              </Button>
               <Button variant="outline" size="sm" onClick={handleImportJSON}>
                 <Upload className="mr-1.5 h-4 w-4" />
                 导入
@@ -1491,109 +1380,6 @@ export function QuestionBankManager() {
             </div>
           </div>
 
-          {bindingAuditReport && (
-            <div className="grid gap-2 rounded-lg border border-amber-100 bg-amber-50/60 p-3 text-xs text-amber-950 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2 font-medium">
-                  <span>知识点绑定巡检：异常 {bindingAuditReport.issues.length} / {bindingAuditReport.totalQuestions}</span>
-                  <Badge variant="outline" className="border-amber-200 bg-white text-amber-700">自动每日</Badge>
-                </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-amber-800">
-                  <span>未绑定 {bindingAuditReport.counts.missing}</span>
-                  <span>无法解析 {bindingAuditReport.counts.unresolved}</span>
-                  <span>同名歧义 {bindingAuditReport.counts['ambiguous-name']}</span>
-                  <span>上次巡检 {new Date(bindingAuditReport.generatedAt).toLocaleString()}</span>
-                  {nextBindingAuditAt && <span>下次自动 {nextBindingAuditAt.toLocaleString()}</span>}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="bg-white"
-                  disabled={bindingAuditReport.issues.length === 0}
-                  onClick={() => setFilterType('binding-error')}
-                >
-                  查看异常题
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="bg-white"
-                  onClick={handleExportBindingAuditReport}
-                >
-                  <Download className="mr-1.5 h-3.5 w-3.5" />
-                  导出报告
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-lg border border-cyan-100 bg-cyan-50/50 p-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-cyan-950">知识点别名库</div>
-                <p className="mt-1 text-xs leading-5 text-cyan-800">
-                  自动绑定只会推荐现有 MindCanvas 路径；别名用于把常见叫法映射到标准知识点。
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <Badge variant="outline" className="bg-white">默认 {DEFAULT_KNOWLEDGE_ALIAS_ENTRIES.length}</Badge>
-                  <Badge variant="outline" className="bg-white">自定义 {customKnowledgeAliases.length}</Badge>
-                </div>
-              </div>
-              <div className="grid w-full gap-2 lg:max-w-2xl lg:grid-cols-[minmax(120px,0.85fr)_minmax(180px,1.35fr)_auto]">
-                <Input
-                  value={newKnowledgeAlias}
-                  onChange={(e) => setNewKnowledgeAlias(e.target.value)}
-                  placeholder="别名，如：加强削弱"
-                  className="bg-white"
-                />
-                <Input
-                  value={newKnowledgeAliasTarget}
-                  list="knowledge-alias-target-options"
-                  onChange={(e) => setNewKnowledgeAliasTarget(e.target.value)}
-                  placeholder="目标知识点路径或名称"
-                  className="bg-white"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="bg-white"
-                  disabled={!newKnowledgeAlias.trim() || !newKnowledgeAliasTarget.trim()}
-                  onClick={handleAddKnowledgeAlias}
-                >
-                  <Plus className="mr-1.5 h-4 w-4" />
-                  添加
-                </Button>
-              </div>
-            </div>
-            <datalist id="knowledge-alias-target-options">
-              {knowledgePathsForParser.map(path => (
-                <option key={path} value={path} />
-              ))}
-            </datalist>
-            {customKnowledgeAliases.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {customKnowledgeAliases.map(entry => (
-                  <div key={entry.alias} className="flex max-w-full items-center gap-2 rounded-md border bg-white px-2 py-1 text-xs text-slate-700">
-                    <span className="font-medium text-cyan-800">{entry.alias}</span>
-                    <span className="max-w-[260px] truncate text-slate-500">→ {entry.target}</span>
-                    <button
-                      type="button"
-                      className="rounded p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                      onClick={() => handleDeleteKnowledgeAlias(entry.alias)}
-                      aria-label={`删除别名 ${entry.alias}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_auto]">
             <div className="relative min-w-0">
               <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1606,13 +1392,12 @@ export function QuestionBankManager() {
             </div>
             <select
               value={filterType}
-              onChange={(e) => setFilterType(e.target.value as 'all' | 'real' | 'simulated' | 'binding-error' | 'similar')}
+              onChange={(e) => setFilterType(e.target.value as 'all' | 'real' | 'simulated' | 'similar')}
               className="h-9 rounded-md border bg-white px-2 text-sm"
             >
               <option value="all">全部类型</option>
               <option value="real">真题</option>
               <option value="simulated">模拟题</option>
-              <option value="binding-error">绑定异常</option>
               <option value="similar">相似/重复题</option>
             </select>
           </div>
@@ -1719,11 +1504,6 @@ export function QuestionBankManager() {
                           </div>
                         </div>
                         <p className="mb-2 line-clamp-2 w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-800 word-break-all sm:line-clamp-3">{question.content}</p>
-                        {hasBindingIssue(question) && (
-                          <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
-                            绑定异常：{inspectBinding(question).reason}
-                          </div>
-                        )}
                         <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 sm:hidden">
                           <span className="rounded bg-[#b7e3ff]/45 px-1.5 py-0.5 font-medium text-[#5e5394]">
                             答案 {question.correctAnswer || '-'}
@@ -2742,7 +2522,7 @@ export function QuestionBankManager() {
                                       <div className="line-clamp-2 leading-5 text-slate-700">{candidate.path}</div>
                                       {candidate.matchedAliases.length > 0 && (
                                         <div className="mt-1 text-[11px] text-amber-700">
-                                          别名命中：{candidate.matchedAliases.join('、')}
+                                          匹配依据：{candidate.matchedAliases.join('、')}
                                         </div>
                                       )}
                                     </button>
