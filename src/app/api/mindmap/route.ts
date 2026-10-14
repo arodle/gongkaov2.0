@@ -1,6 +1,102 @@
 import { sql } from '@/lib/db/neon-service';
 import { authErrorResponse, getRequestUserId } from '@/lib/server/auth';
 
+type NodeInput = Record<string, unknown>;
+type EdgeInput = Record<string, unknown>;
+
+function normalizeNodes(nodes: NodeInput[]) {
+  return nodes.map((node) => ({
+    id: typeof node.id === 'string' && node.id ? node.id : `mn_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+    parent_id: typeof node.parent_id === 'string' && node.parent_id ? node.parent_id : null,
+    name: typeof node.name === 'string' && node.name ? node.name : 'Unnamed Node',
+    content: typeof node.content === 'string' ? node.content : null,
+    markdown: typeof node.markdown === 'string' ? node.markdown : null,
+    node_type: typeof node.node_type === 'string' && node.node_type ? node.node_type : 'topic',
+    color_tag: typeof node.color_tag === 'string' && node.color_tag ? node.color_tag : '#3b82f6',
+    pos_x: typeof node.pos_x === 'number' ? node.pos_x : 0,
+    pos_y: typeof node.pos_y === 'number' ? node.pos_y : 0,
+    width: typeof node.width === 'number' ? node.width : 120,
+    height: typeof node.height === 'number' ? node.height : 40,
+    expanded: typeof node.expanded === 'boolean' ? node.expanded : true,
+    sort_order: typeof node.sort_order === 'number' ? node.sort_order : 0,
+  }));
+}
+
+async function upsertMapNodes(mapId: string, userId: string, nodes: NodeInput[]) {
+  if (nodes.length === 0) return;
+  const payload = JSON.stringify(normalizeNodes(nodes));
+
+  await sql`
+    INSERT INTO map_node (
+      id, mind_map_id, parent_id, name, content, markdown, node_type,
+      color_tag, pos_x, pos_y, width, height, expanded, sort_order, user_id, updated_at
+    )
+    SELECT
+      item.id, ${mapId}, item.parent_id, item.name, item.content, item.markdown, item.node_type,
+      item.color_tag, item.pos_x, item.pos_y, item.width, item.height, item.expanded,
+      item.sort_order, ${userId}, NOW()
+    FROM jsonb_to_recordset(${payload}::jsonb) AS item(
+      id TEXT,
+      parent_id TEXT,
+      name TEXT,
+      content TEXT,
+      markdown TEXT,
+      node_type TEXT,
+      color_tag TEXT,
+      pos_x DOUBLE PRECISION,
+      pos_y DOUBLE PRECISION,
+      width DOUBLE PRECISION,
+      height DOUBLE PRECISION,
+      expanded BOOLEAN,
+      sort_order INTEGER
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      parent_id = EXCLUDED.parent_id,
+      name = EXCLUDED.name,
+      content = EXCLUDED.content,
+      markdown = EXCLUDED.markdown,
+      node_type = EXCLUDED.node_type,
+      color_tag = EXCLUDED.color_tag,
+      pos_x = EXCLUDED.pos_x,
+      pos_y = EXCLUDED.pos_y,
+      width = EXCLUDED.width,
+      height = EXCLUDED.height,
+      expanded = EXCLUDED.expanded,
+      sort_order = EXCLUDED.sort_order,
+      updated_at = NOW()
+    WHERE map_node.user_id = ${userId} AND map_node.mind_map_id = ${mapId}
+  `;
+}
+
+async function upsertMapEdges(mapId: string, userId: string, edges: EdgeInput[]) {
+  if (edges.length === 0) return;
+  const payload = JSON.stringify(edges.map((edge) => ({
+    id: typeof edge.id === 'string' && edge.id ? edge.id : `me_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+    source_node_id: edge.source_node_id,
+    target_node_id: edge.target_node_id,
+    edge_type: typeof edge.edge_type === 'string' && edge.edge_type ? edge.edge_type : 'parent',
+  })));
+
+  await sql`
+    INSERT INTO map_edge (
+      id, mind_map_id, source_node_id, target_node_id, edge_type, user_id
+    )
+    SELECT
+      item.id, ${mapId}, item.source_node_id, item.target_node_id, item.edge_type, ${userId}
+    FROM jsonb_to_recordset(${payload}::jsonb) AS item(
+      id TEXT,
+      source_node_id TEXT,
+      target_node_id TEXT,
+      edge_type TEXT
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      source_node_id = EXCLUDED.source_node_id,
+      target_node_id = EXCLUDED.target_node_id,
+      edge_type = EXCLUDED.edge_type
+    WHERE map_edge.user_id = ${userId} AND map_edge.mind_map_id = ${mapId}
+  `;
+}
+
 export async function GET(request: Request) {
   try {
     const userId = await getRequestUserId(request);
@@ -69,52 +165,8 @@ export async function POST(request: Request) {
       VALUES (${mindMapId}, ${userId}, ${name}, ${description || null}, ${category || null}, ${JSON.stringify(settings || {})}, NOW())
     `;
 
-    if (nodes && nodes.length > 0) {
-      for (const node of nodes) {
-        const nodeId = node.id || `mn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await sql`
-          INSERT INTO map_node (
-            id, mind_map_id, parent_id, name, content, markdown, node_type,
-            color_tag, pos_x, pos_y, width, height, expanded, sort_order, user_id, updated_at
-          ) VALUES (
-            ${nodeId},
-            ${mindMapId},
-            ${node.parent_id || null},
-            ${node.name || 'Unnamed Node'},
-            ${node.content || null},
-            ${node.markdown || null},
-            ${node.node_type || 'topic'},
-            ${node.color_tag || '#3b82f6'},
-            ${node.pos_x || 0},
-            ${node.pos_y || 0},
-            ${node.width || 120},
-            ${node.height || 40},
-            ${node.expanded !== undefined ? node.expanded : true},
-            ${node.sort_order ?? 0},
-            ${userId},
-            NOW()
-          )
-        `;
-      }
-    }
-
-    if (edges && edges.length > 0) {
-      for (const edge of edges) {
-        const edgeId = `me_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await sql`
-          INSERT INTO map_edge (
-            id, mind_map_id, source_node_id, target_node_id, edge_type, user_id
-          ) VALUES (
-            ${edgeId},
-            ${mindMapId},
-            ${edge.source_node_id},
-            ${edge.target_node_id},
-            ${edge.edge_type || 'parent'},
-            ${userId}
-          )
-        `;
-      }
-    }
+    await upsertMapNodes(mindMapId, userId, Array.isArray(nodes) ? nodes : []);
+    await upsertMapEdges(mindMapId, userId, Array.isArray(edges) ? edges : []);
 
     return new Response(JSON.stringify({
       success: true,
@@ -193,72 +245,8 @@ export async function PUT(request: Request) {
       `;
     }
 
-    if (nodes && nodes.length > 0) {
-      for (const node of nodes) {
-        const nodeId = node.id || `mn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await sql`
-          INSERT INTO map_node (
-            id, mind_map_id, parent_id, name, content, markdown, node_type,
-            color_tag, pos_x, pos_y, width, height, expanded, sort_order, user_id, updated_at
-          ) VALUES (
-            ${nodeId},
-            ${id},
-            ${node.parent_id || null},
-            ${node.name || 'Unnamed Node'},
-            ${node.content || null},
-            ${node.markdown || null},
-            ${node.node_type || 'topic'},
-            ${node.color_tag || '#3b82f6'},
-            ${node.pos_x || 0},
-            ${node.pos_y || 0},
-            ${node.width || 120},
-            ${node.height || 40},
-            ${node.expanded !== undefined ? node.expanded : true},
-            ${node.sort_order ?? 0},
-            ${userId},
-            NOW()
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            parent_id = EXCLUDED.parent_id,
-            name = EXCLUDED.name,
-            content = EXCLUDED.content,
-            markdown = EXCLUDED.markdown,
-            node_type = EXCLUDED.node_type,
-            color_tag = EXCLUDED.color_tag,
-            pos_x = EXCLUDED.pos_x,
-            pos_y = EXCLUDED.pos_y,
-            width = EXCLUDED.width,
-            height = EXCLUDED.height,
-            expanded = EXCLUDED.expanded,
-            sort_order = EXCLUDED.sort_order,
-            updated_at = NOW()
-          WHERE map_node.user_id = ${userId} AND map_node.mind_map_id = ${id}
-        `;
-      }
-    }
-
-    if (edges && edges.length > 0) {
-      for (const edge of edges) {
-        const edgeId = edge.id || `me_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        await sql`
-          INSERT INTO map_edge (
-            id, mind_map_id, source_node_id, target_node_id, edge_type, user_id
-          ) VALUES (
-            ${edgeId},
-            ${id},
-            ${edge.source_node_id},
-            ${edge.target_node_id},
-            ${edge.edge_type || 'parent'},
-            ${userId}
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            source_node_id = EXCLUDED.source_node_id,
-            target_node_id = EXCLUDED.target_node_id,
-            edge_type = EXCLUDED.edge_type
-          WHERE map_edge.user_id = ${userId} AND map_edge.mind_map_id = ${id}
-        `;
-      }
-    }
+    await upsertMapNodes(id, userId, Array.isArray(nodes) ? nodes : []);
+    await upsertMapEdges(id, userId, Array.isArray(edges) ? edges : []);
 
     return new Response(JSON.stringify({
       success: true,

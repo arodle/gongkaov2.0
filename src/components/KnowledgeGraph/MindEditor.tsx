@@ -689,7 +689,6 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
-        keepalive: true,
         body: JSON.stringify({
           id: savedMindMap.id,
           name: savedMindMap.name,
