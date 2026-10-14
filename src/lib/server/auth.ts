@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { createHash, randomBytes, pbkdf2Sync, timingSafeEqual } from 'crypto';
-import { neon } from '@neondatabase/serverless';
+import { sql } from '@/lib/db/sql';
 
 export const DEFAULT_USER_ID = 'default_user';
 export const SESSION_COOKIE = 'gongkao_session';
@@ -21,14 +21,6 @@ export class ApiAuthError extends Error {
     this.status = status;
   }
 }
-
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.NEON_DATABASE_URL;
-
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required');
-}
-
-const sql = neon(databaseUrl);
 
 export async function ensureAuthTables() {
   await sql`

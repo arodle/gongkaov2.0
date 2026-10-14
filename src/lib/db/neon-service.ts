@@ -1,13 +1,10 @@
 import 'dotenv/config';
-import { neon } from '@neondatabase/serverless';
 import { DEFAULT_USER_ID } from '@/lib/server/auth';
 import { createExamPaperId, normalizeExamPaperName } from '@/lib/exam-papers';
 import { normalizeBehaviorEvent } from '@/lib/behavior-events';
 import type { BehaviorEventRecord } from '@/types';
+import { sql } from './sql';
 
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.NEON_DATABASE_URL;
-
-const sql = neon(databaseUrl!);
 export { sql };
 
 function toMapNodeId(id: string | null | undefined) {
