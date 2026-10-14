@@ -37,6 +37,7 @@ export async function POST(request: Request) {
         width FLOAT DEFAULT 120,
         height FLOAT DEFAULT 40,
         expanded BOOLEAN DEFAULT true,
+        sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (mind_map_id) REFERENCES mind_map(id) ON DELETE CASCADE,
@@ -77,6 +78,10 @@ export async function POST(request: Request) {
 
     await sql`
       ALTER TABLE map_node ADD COLUMN IF NOT EXISTS last_practiced_at TIMESTAMP;
+    `;
+
+    await sql`
+      ALTER TABLE map_node ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
     `;
 
     await sql`

@@ -34,6 +34,7 @@ export async function initTables() {
       width DOUBLE PRECISION DEFAULT 120,
       height DOUBLE PRECISION DEFAULT 40,
       expanded BOOLEAN DEFAULT true,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -53,6 +54,7 @@ export async function initTables() {
 
   await sql`ALTER TABLE map_node ADD COLUMN IF NOT EXISTS ps_score INTEGER DEFAULT 50`;
   await sql`ALTER TABLE map_node ADD COLUMN IF NOT EXISTS last_practiced_at TIMESTAMP`;
+  await sql`ALTER TABLE map_node ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS question_bank (

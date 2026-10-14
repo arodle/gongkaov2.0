@@ -264,6 +264,13 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
   const markdownTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const changeVersionRef = useRef(0);
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
+
+  const markChanged = useCallback(() => {
+    changeVersionRef.current += 1;
+    setHasChanges(true);
+  }, []);
 
   useEffect(() => {
     if (initialMindMap) setMindMap(initialMindMap);
@@ -271,6 +278,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     if (initialEdges) setEdges(initialEdges);
     setDeletedNodeIds([]);
     setDeletedEdgeIds([]);
+    setHasChanges(false);
+    changeVersionRef.current = 0;
   }, [initialMindMap, initialNodes, initialEdges]);
 
   useEffect(() => {
@@ -359,8 +368,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     )));
     setEditingNodeId(null);
     setEditingTitle('');
-    setHasChanges(true);
-  }, [editingNodeId, editingTitle]);
+    markChanged();
+  }, [editingNodeId, editingTitle, markChanged]);
 
   const updateSelectedNode = useCallback((patch: Partial<MapNodeRecord>) => {
     if (!selectedNodeId) return;
@@ -370,8 +379,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         ? { ...node, ...patch, updated_at: new Date().toISOString() }
         : node
     )));
-    setHasChanges(true);
-  }, [selectedNodeId]);
+    markChanged();
+  }, [markChanged, selectedNodeId]);
 
   const insertMarkdown = useCallback((before: string, after = '', placeholder = '文本') => {
     if (!selectedNode) return;
@@ -446,8 +455,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     setSelectedNodeId(node.id);
     setEditingNodeId(node.id);
     setEditingTitle(node.name);
-    setHasChanges(true);
-  }, [mindMap]);
+    markChanged();
+  }, [markChanged, mindMap]);
 
   const addSiblingNode = useCallback(() => {
     if (!selectedNode) return;
@@ -471,8 +480,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       if (n.id === prevSibling.id) return { ...n, sort_order: selectedNode.sort_order ?? 0, updated_at: new Date().toISOString() };
       return n;
     }));
-    setHasChanges(true);
-  }, [selectedNode, nodes, pushUndo]);
+    markChanged();
+  }, [markChanged, selectedNode, nodes, pushUndo]);
 
   const moveDown = useCallback(() => {
     if (!selectedNode) return;
@@ -487,8 +496,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       if (n.id === nextSibling.id) return { ...n, sort_order: selectedNode.sort_order ?? 0, updated_at: new Date().toISOString() };
       return n;
     }));
-    setHasChanges(true);
-  }, [selectedNode, nodes, pushUndo]);
+    markChanged();
+  }, [markChanged, selectedNode, nodes, pushUndo]);
 
   const promoteNode = useCallback(() => {
     if (!selectedNode?.parent_id) return;
@@ -504,8 +513,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     });
     setNodes(newNodes);
     setEdges(rebuildParentEdges(mindMap?.id || 'default', newNodes));
-    setHasChanges(true);
-  }, [selectedNode, nodes, mindMap, pushUndo]);
+    markChanged();
+  }, [markChanged, selectedNode, nodes, mindMap, pushUndo]);
 
   const demoteNode = useCallback(() => {
     if (!selectedNode) return;
@@ -523,8 +532,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     setNodes(newNodes);
     setEdges(rebuildParentEdges(mindMap?.id || 'default', newNodes));
     setExpandedNodes(prev => new Set([...prev, newParentId]));
-    setHasChanges(true);
-  }, [selectedNode, nodes, mindMap, pushUndo]);
+    markChanged();
+  }, [markChanged, selectedNode, nodes, mindMap, pushUndo]);
 
   const undo = useCallback(() => {
     setUndoStack(prev => {
@@ -534,9 +543,10 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       setEdges(snapshot.edges);
       setDeletedNodeIds(snapshot.deletedNodeIds);
       setDeletedEdgeIds(snapshot.deletedEdgeIds);
+      markChanged();
       return prev.slice(0, -1);
     });
-  }, []);
+  }, [markChanged]);
 
   const moveNode = useCallback((nodeId: string, nextParentId: string | null) => {
     if (nodeId === nextParentId) return;
@@ -558,8 +568,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     if (nextParentId) {
       setExpandedNodes(prev => new Set([...prev, nextParentId]));
     }
-    setHasChanges(true);
-  }, [mindMap, nodes, pushUndo]);
+    markChanged();
+  }, [markChanged, mindMap, nodes, pushUndo]);
 
   const deleteNode = useCallback((nodeId: string) => {
     const node = nodes.find(item => item.id === nodeId);
@@ -617,11 +627,11 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           setSelectedNodeId(null);
         }
         setEditingNodeId(null);
-        setHasChanges(true);
+        markChanged();
         toast.success('节点已删除，可在个人中心最近删除中尝试恢复');
       },
     });
-  }, [edges, mindMap, nodes, practiceRecords, pushUndo, selectedNodeId]);
+  }, [edges, markChanged, mindMap, nodes, practiceRecords, pushUndo, selectedNodeId]);
 
   const handleCanvasNodesChange = useCallback((nextNodes: MapNodeRecord[]) => {
     setNodes(prev => {
@@ -634,10 +644,10 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           || node.pos_x !== next.pos_x
           || node.pos_y !== next.pos_y;
       });
-      if (changed) setHasChanges(true);
+      if (changed) markChanged();
       return nextNodes;
     });
-  }, []);
+  }, [markChanged]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -663,48 +673,89 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [deleteNode, selectedNodeId, undo]);
 
-  const saveToNeon = useCallback(async () => {
+  const saveToNeon = useCallback(async (showToast = true) => {
     if (!mindMap) return;
+    if (saveInFlightRef.current) return saveInFlightRef.current;
 
+    const savedVersion = changeVersionRef.current;
+    const savedMindMap = mindMap;
+    const savedNodes = nodes;
+    const savedDeleteNodeIds = [...deletedNodeIds];
+    const savedDeleteEdgeIds = [...deletedEdgeIds];
+    const currentEdges = rebuildParentEdges(savedMindMap.id, savedNodes);
     setIsSaving(true);
     const savePromise = (async () => {
-      const currentEdges = rebuildParentEdges(mindMap.id, nodes);
       const response = await fetch('/api/mindmap', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        keepalive: true,
         body: JSON.stringify({
-          id: mindMap.id,
-          name: mindMap.name,
-          description: mindMap.description,
-          category: mindMap.category,
-          nodes,
+          id: savedMindMap.id,
+          name: savedMindMap.name,
+          description: savedMindMap.description,
+          category: savedMindMap.category,
+          nodes: savedNodes,
           edges: currentEdges,
-          deleteNodeIds: deletedNodeIds,
-          deleteEdgeIds: deletedEdgeIds,
+          deleteNodeIds: savedDeleteNodeIds,
+          deleteEdgeIds: savedDeleteEdgeIds,
         }),
       });
-      const result = await response.json();
-      if (!result.success) throw new Error(result.message || '保存失败');
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || `保存失败（HTTP ${response.status}）`);
+      }
 
       setEdges(currentEdges);
-      setDeletedNodeIds([]);
-      setDeletedEdgeIds([]);
-      setHasChanges(false);
-      onSave?.({ mindMap, nodes, edges: currentEdges });
+      setDeletedNodeIds(current => current.filter(id => !savedDeleteNodeIds.includes(id)));
+      setDeletedEdgeIds(current => current.filter(id => !savedDeleteEdgeIds.includes(id)));
+      if (changeVersionRef.current === savedVersion) {
+        setHasChanges(false);
+      }
+      onSave?.({ mindMap: savedMindMap, nodes: savedNodes, edges: currentEdges });
     })();
+    saveInFlightRef.current = savePromise;
 
-    toast.promise(savePromise, {
-      loading: '正在保存 Mind 编辑内容...',
-      success: 'Mind 编辑内容已保存',
-      error: (error: unknown) => error instanceof Error ? error.message : '保存失败',
-    });
+    if (showToast) {
+      toast.promise(savePromise, {
+        loading: '正在保存 Mind 编辑内容...',
+        success: 'Mind 编辑内容已保存',
+        error: (error: unknown) => error instanceof Error ? error.message : '保存失败',
+      });
+    }
 
     try {
       await savePromise;
+    } catch (error) {
+      if (!showToast) {
+        toast.error(error instanceof Error ? `自动保存失败：${error.message}` : '自动保存失败');
+      }
+      throw error;
     } finally {
+      saveInFlightRef.current = null;
       setIsSaving(false);
     }
   }, [deletedEdgeIds, deletedNodeIds, mindMap, nodes, onSave]);
+
+  useEffect(() => {
+    if (!hasChanges || isSaving || !mindMap || editingNodeId) return;
+
+    const timer = window.setTimeout(() => {
+      void saveToNeon(false).catch(() => undefined);
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [deletedEdgeIds, deletedNodeIds, editingNodeId, hasChanges, isSaving, mindMap, nodes, saveToNeon]);
+
+  useEffect(() => {
+    const warnAboutUnsavedChanges = (event: BeforeUnloadEvent) => {
+      if (!hasChanges) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnAboutUnsavedChanges);
+    return () => window.removeEventListener('beforeunload', warnAboutUnsavedChanges);
+  }, [hasChanges]);
 
   const handleRowDragStart = useCallback((nodeId: string) => (e: React.PointerEvent) => {
     if (shouldIgnoreRowDrag(e.target)) return;
@@ -796,14 +847,14 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         if (nextParentId) {
           setExpandedNodes(prev => new Set([...prev, nextParentId]));
         }
-        setHasChanges(true);
+        markChanged();
       }
     }
 
     setTouchDragNodeId(null);
     setDragStartPos(null);
     setDropIndicator(null);
-  }, [dragStartPos, dropIndicator, mindMap, nodes, pushUndo, touchDragNodeId]);
+  }, [dragStartPos, dropIndicator, markChanged, mindMap, nodes, pushUndo, touchDragNodeId]);
 
   const renderNode = (treeNode: TreeNode, depth: number): React.ReactNode => {
     const { node, children } = treeNode;
@@ -956,7 +1007,14 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
             </button>
           ))}
         </div>
-        <Button size="sm" onClick={saveToNeon} disabled={isSaving || !mindMap} className={cn('h-8 shrink-0 px-2', hasChanges && 'bg-amber-600 hover:bg-amber-700')}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void saveToNeon(true)}
+          disabled={isSaving || !mindMap}
+          aria-label={isSaving ? '正在保存' : hasChanges ? '保存修改' : '内容已保存'}
+          className={cn('h-8 shrink-0 px-2', hasChanges && 'bg-amber-600 hover:bg-amber-700')}
+        >
           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         </Button>
       </div>
@@ -978,13 +1036,13 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
               className="h-8 border-transparent bg-transparent px-1 text-sm font-semibold shadow-none"
               onChange={(event) => {
                 setMindMap(prev => prev ? { ...prev, name: event.target.value } : prev);
-                setHasChanges(true);
+                markChanged();
               }}
             />
           </div>
-          <Button size="sm" onClick={saveToNeon} disabled={isSaving || !mindMap} className={hasChanges ? 'bg-amber-600 hover:bg-amber-700' : undefined}>
+          <Button type="button" size="sm" onClick={() => void saveToNeon(true)} disabled={isSaving || !mindMap} className={hasChanges ? 'bg-amber-600 hover:bg-amber-700' : undefined}>
             {isSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
-            保存
+            {isSaving ? '保存中' : hasChanges ? '保存' : '已保存'}
           </Button>
         </div>
 

@@ -75,7 +75,7 @@ export async function POST(request: Request) {
         await sql`
           INSERT INTO map_node (
             id, mind_map_id, parent_id, name, content, markdown, node_type,
-            color_tag, pos_x, pos_y, width, height, expanded, user_id, updated_at
+            color_tag, pos_x, pos_y, width, height, expanded, sort_order, user_id, updated_at
           ) VALUES (
             ${nodeId},
             ${mindMapId},
@@ -90,6 +90,7 @@ export async function POST(request: Request) {
             ${node.width || 120},
             ${node.height || 40},
             ${node.expanded !== undefined ? node.expanded : true},
+            ${node.sort_order ?? 0},
             ${userId},
             NOW()
           )
@@ -198,7 +199,7 @@ export async function PUT(request: Request) {
         await sql`
           INSERT INTO map_node (
             id, mind_map_id, parent_id, name, content, markdown, node_type,
-            color_tag, pos_x, pos_y, width, height, expanded, user_id, updated_at
+            color_tag, pos_x, pos_y, width, height, expanded, sort_order, user_id, updated_at
           ) VALUES (
             ${nodeId},
             ${id},
@@ -213,6 +214,7 @@ export async function PUT(request: Request) {
             ${node.width || 120},
             ${node.height || 40},
             ${node.expanded !== undefined ? node.expanded : true},
+            ${node.sort_order ?? 0},
             ${userId},
             NOW()
           )
@@ -228,6 +230,7 @@ export async function PUT(request: Request) {
             width = EXCLUDED.width,
             height = EXCLUDED.height,
             expanded = EXCLUDED.expanded,
+            sort_order = EXCLUDED.sort_order,
             updated_at = NOW()
           WHERE map_node.user_id = ${userId} AND map_node.mind_map_id = ${id}
         `;
