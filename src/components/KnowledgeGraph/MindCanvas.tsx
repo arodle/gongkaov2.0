@@ -1590,7 +1590,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
           style={{
             backgroundImage: 'radial-gradient(circle, #cbd5e1 1.2px, transparent 1.2px)',
             backgroundSize: `${24 * scale}px ${24 * scale}px`,
-            transform: `translate(${position.x}px, ${position.y}px)`,
+            backgroundPosition: `${position.x}px ${position.y}px`,
           }}
         />
 
