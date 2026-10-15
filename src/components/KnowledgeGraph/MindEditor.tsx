@@ -6,7 +6,6 @@ import {
   Bold,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   Code2,
   Edit3,
   Eye,
@@ -265,7 +264,6 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [showManual, setShowManual] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
-  const [isTextEditorCollapsed, setIsTextEditorCollapsed] = useState(false);
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
@@ -1040,7 +1038,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   }
 
   return (
-    <div ref={editorShellRef} className="flex h-full min-h-0 flex-col overflow-hidden bg-white lg:flex-row lg:rounded-xl lg:border lg:border-slate-200">
+    <div ref={editorShellRef} className="relative flex h-full min-h-0 flex-col overflow-hidden bg-white lg:flex-row lg:rounded-xl lg:border lg:border-slate-200 lg:pr-[340px] xl:pr-[400px]">
       <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 py-2 lg:hidden">
         <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-md bg-slate-100 p-1">
           {([
@@ -1053,7 +1051,6 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
               type="button"
               onClick={() => {
                 setMobilePane(value);
-                if (value === 'text') setIsTextEditorCollapsed(false);
               }}
               className={cn(
                 'h-7 rounded text-xs font-medium transition-colors',
@@ -1083,7 +1080,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
       </div>
 
       <aside className={cn(
-        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 lg:flex lg:w-[var(--mind-editor-sidebar-width)]",
+        "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-slate-50/70 lg:flex lg:w-[var(--mind-editor-sidebar-width)] lg:overflow-visible",
         mobilePane === 'outline' || mobilePane === 'text' ? 'flex' : 'hidden'
       )} style={{ '--mind-editor-sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}>
         <div className="hidden shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2 lg:flex">
@@ -1126,7 +1123,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         <ScrollArea className={cn(
           "min-h-0",
           mobilePane === 'outline' ? "flex-1" : "hidden",
-          "lg:block lg:flex-[1_1_42%]"
+          "lg:block lg:flex-1"
         )}>
           <div
             className={cn(
@@ -1153,29 +1150,34 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
         <div className={cn(
           "min-h-0 flex-col border-t border-slate-200 bg-white",
           mobilePane === 'text' ? "flex flex-1" : "hidden",
-          "lg:flex",
-          isTextEditorCollapsed ? "lg:shrink-0" : "lg:flex-[1.35_1_58%]"
+          "lg:absolute lg:inset-y-0 lg:right-0 lg:z-40 lg:flex lg:w-[340px] lg:border-l lg:border-t-0 lg:border-slate-200 lg:shadow-[-12px_0_32px_rgba(15,23,42,0.06)] xl:w-[400px]"
         )}>
           <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-3 py-2">
-            <div className="text-sm font-semibold text-slate-800">文本编辑器</div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-800">节点编辑</div>
+              <div className="truncate text-[11px] text-slate-400">
+                {selectedNode ? selectedNode.name : '从大纲或画布选择节点'}
+              </div>
+            </div>
             <div className="flex items-center gap-1">
               <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setIsTextEditorCollapsed(value => !value)}
-                aria-label={isTextEditorCollapsed ? '展开文本编辑器' : '收起文本编辑器'}
+                type="button"
+                size="sm"
+                onClick={() => void saveToNeon(true)}
+                disabled={isSaving || !mindMap}
+                className={cn('hidden h-8 gap-1.5 px-2.5 lg:inline-flex', hasChanges && 'bg-amber-600 hover:bg-amber-700')}
               >
-                {isTextEditorCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {isSaving ? '保存中' : hasChanges ? '保存' : '已保存'}
               </Button>
-              {selectedNode && !isTextEditorCollapsed && (
+              {selectedNode && (
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedNodeId(null)}>
                   <X className="h-4 w-4" />
                 </Button>
               )}
             </div>
           </div>
-          {!isTextEditorCollapsed && selectedNode ? (
+          {selectedNode ? (
             <ScrollArea className="min-h-0 flex-1">
               <div className="space-y-3 p-3">
                 <label className="block space-y-1.5">
@@ -1343,11 +1345,11 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </Button>
               </div>
             </ScrollArea>
-          ) : !isTextEditorCollapsed ? (
+          ) : (
             <div className="min-h-0 flex-1 p-4 text-sm text-slate-500">
               选择左侧大纲或右侧画布节点后，可以编辑标题、摘要、正文、类型和节点尺寸。
             </div>
-          ) : null}
+          )}
         </div>
       </aside>
 
@@ -1413,8 +1415,8 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                   <p>单击节点会在右侧画布定位并选中；双击标题可直接改名；点击箭头可折叠或展开子级。顶部按钮可新增根节点、子节点和同级节点。</p>
                 </section>
                 <section>
-                  <h3 className="mb-2 font-semibold text-slate-900">文本编辑器</h3>
-                  <p>选中节点后，左下编辑区可修改标题、摘要和 Markdown 正文；工具栏支持标题、加粗、斜体、列表、引用、代码和预览。修改后点击保存写入 Neon。</p>
+                  <h3 className="mb-2 font-semibold text-slate-900">节点编辑器</h3>
+                  <p>选中左侧大纲或画布节点后，可在右侧固定面板修改标题、摘要和 Markdown 正文；手机端请切换到“文本”。工具栏支持标题、加粗、斜体、列表、引用、代码、图片和预览。</p>
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">调整层级</h3>
@@ -1442,7 +1444,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">保存</h3>
-                  <p>大纲改名、拖拽层级、删除节点和画布调整大小后，左上角保存按钮会变色。点击保存后写入 Neon。</p>
+                  <p>修改后会自动保存，也可点击右侧节点编辑器或左上角的保存按钮立即写入服务器数据库。按钮显示“已保存”代表本次修改已经提交。</p>
                 </section>
               </div>
             </ScrollArea>
@@ -1452,6 +1454,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           mindMap={mindMap || undefined}
           nodes={nodes}
           readOnly={false}
+          showNodeDetails={false}
           focusNodeId={selectedNodeId}
           onSelectNode={selectNode}
           onNodesChange={handleCanvasNodesChange}

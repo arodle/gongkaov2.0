@@ -47,6 +47,7 @@ interface MindCanvasProps {
   mindMap?: MindMapRecord;
   nodes?: MapNodeRecord[];
   readOnly?: boolean;
+  showNodeDetails?: boolean;
   focusNodeId?: string | null;
   onSelectNode?: (node: MapNodeRecord) => void;
   onNodesChange?: (nodes: MapNodeRecord[]) => void;
@@ -197,6 +198,7 @@ interface MindCanvasLocalSettings {
 export function MindCanvas({
   mindMap: initialMindMap,
   nodes: initialNodes,
+  showNodeDetails = true,
   focusNodeId,
   onSelectNode,
   onNodesChange,
@@ -1113,8 +1115,8 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
   const handleNodeClick = useCallback((node: MapNodeRecord) => {
     setSelectedNode(node);
     onSelectNode?.(node);
-    setShowNotebook(!!(node.markdown && scale > 0.7));
-  }, [scale, onSelectNode]);
+    setShowNotebook(showNodeDetails && !!(node.markdown && scale > 0.7));
+  }, [scale, showNodeDetails, onSelectNode]);
 
   const focusBranch = useCallback((node: MapNodeRecord) => {
     if (!childCountById.has(node.id)) return;
@@ -1877,7 +1879,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
 
         {/* 侧面 Markdown 笔记面板 */}
         <AnimatePresence>
-          {selectedNode && showNotebook && selectedNode.markdown && (
+          {showNodeDetails && selectedNode && showNotebook && selectedNode.markdown && (
             <motion.div
               className="absolute inset-x-2 bottom-2 top-12 z-30 flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:bg-slate-900 md:inset-4 md:rounded-2xl"
               initial={{ opacity: 0, y: 15, scale: 0.98 }}
@@ -1914,7 +1916,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
 
         {/* 节点详情面板 */}
         <AnimatePresence>
-          {selectedNode && !showNotebook && (
+          {showNodeDetails && selectedNode && !showNotebook && (
             <motion.div 
               className="absolute inset-x-2 bottom-2 top-auto z-30 flex max-h-[52%] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-xl backdrop-blur-md dark:bg-slate-900/95 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-80"
               initial={{ opacity: 0, x: 40 }} 
