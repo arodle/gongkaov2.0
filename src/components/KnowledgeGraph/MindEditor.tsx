@@ -3,7 +3,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
+  AlertTriangle,
   Bold,
+  BookOpen,
   ChevronDown,
   ChevronRight,
   Code2,
@@ -18,10 +20,12 @@ import {
   Italic,
   List,
   Loader2,
+  Maximize2,
   Monitor,
   Plus,
   Quote,
   Save,
+  Settings2,
   Sigma,
   Trash2,
   Underline,
@@ -50,6 +54,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { saveRecentDeletion } from '@/lib/recent-deletions';
+import { normalizeKnowledgeNodeId } from '@/lib/question-binding';
 import { useAppStore } from '@/lib/stores/appStore';
 import { cn } from '@/lib/utils';
 import type { MapEdgeRecord, MapNodeRecord, MindMapRecord } from '@/types';
@@ -80,6 +85,15 @@ const SIDEBAR_WIDTH_STORAGE_KEY = 'gongkao:mindEditorSidebarWidth';
 const DEFAULT_SIDEBAR_WIDTH = 360;
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 640;
+
+const NODE_TYPE_LABELS: Record<string, string> = {
+  subject: '科目',
+  knowledge: '知识分类',
+  subknowledge: '知识点',
+  angle: '考查角度',
+  topic: '专题',
+  example: '例题',
+};
 
 interface DropIndicator {
   targetId: string | null;
@@ -245,6 +259,7 @@ function moveNodeWithinTree(
 
 export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges: initialEdges, onSave, onTargetedPractice }: MindEditorProps) {
   const practiceRecords = useAppStore(state => state.practiceRecords);
+  const questionBank = useAppStore(state => state.questionBank);
   const [mindMap, setMindMap] = useState<MindMapRecord | null>(initialMindMap || null);
   const [nodes, setNodes] = useState<MapNodeRecord[]>(initialNodes || []);
   const [edges, setEdges] = useState<MapEdgeRecord[]>(initialEdges || []);
@@ -262,6 +277,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [deletedEdgeIds, setDeletedEdgeIds] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<Array<{ nodes: MapNodeRecord[]; edges: MapEdgeRecord[]; deletedNodeIds: string[]; deletedEdgeIds: string[] }>>([]);
   const [showManual, setShowManual] = useState(false);
+  const [showFullEditor, setShowFullEditor] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
@@ -340,6 +356,34 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     () => nodes.find(node => node.id === selectedNodeId) || null,
     [nodes, selectedNodeId],
   );
+  const selectedNodePath = useMemo(() => {
+    if (!selectedNode) return [];
+    const path = [selectedNode.name];
+    const visited = new Set([selectedNode.id]);
+    let parentId = selectedNode.parent_id;
+
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      const parent = nodes.find(node => node.id === parentId);
+      if (!parent) break;
+      path.unshift(parent.name);
+      parentId = parent.parent_id;
+    }
+
+    return path;
+  }, [nodes, selectedNode]);
+  const selectedNodeStats = useMemo(() => {
+    if (!selectedNode) return { questionCount: 0, practiceCount: 0, descendantCount: 0 };
+    const normalizedId = normalizeKnowledgeNodeId(selectedNode.id);
+    const questionCount = questionBank.filter(question => (
+      normalizeKnowledgeNodeId(question.linkedAngleId) === normalizedId
+    )).length;
+    const practiceCount = practiceRecords.filter(record => (
+      record.source_node_ids.some(id => normalizeKnowledgeNodeId(id) === normalizedId)
+    )).length;
+    const descendantCount = collectNodeAndDescendants(nodes, selectedNode.id).size - 1;
+    return { questionCount, practiceCount, descendantCount };
+  }, [nodes, practiceRecords, questionBank, selectedNode]);
 
   useEffect(() => {
     if (nodes.length && expandedNodes.size === 0) {
@@ -1180,6 +1224,9 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           {selectedNode ? (
             <ScrollArea className="min-h-0 flex-1">
               <div className="space-y-3 p-3">
+                <div className="truncate text-xs text-slate-400" title={selectedNodePath.join(' / ')}>
+                  {selectedNodePath.join(' / ')}
+                </div>
                 <label className="block space-y-1.5">
                   <span className="text-xs font-medium text-slate-500">标题</span>
                   <Input
@@ -1190,30 +1237,36 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </label>
 
                 <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-slate-500">类型</span>
-                  <select
-                    value={selectedNode.node_type}
-                    onChange={(event) => updateSelectedNode({ node_type: event.target.value })}
-                    className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="subject">subject</option>
-                    <option value="knowledge">knowledge</option>
-                    <option value="subknowledge">subknowledge</option>
-                    <option value="angle">angle</option>
-                    <option value="topic">topic</option>
-                  </select>
-                </label>
-
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-slate-500">摘要内容</span>
+                  <span className="flex items-center justify-between text-xs font-medium text-slate-500">
+                    <span>卡片摘要</span>
+                    <span className="font-normal text-slate-400">{(selectedNode.content || '').length}/80</span>
+                  </span>
                   <Textarea
                     value={selectedNode.content || ''}
                     onChange={(event) => updateSelectedNode({ content: event.target.value })}
+                    maxLength={80}
                     className="min-h-20 resize-none text-sm"
-                    placeholder="节点卡片上展示的简短说明"
+                    placeholder="用一两句话概括知识点，显示在画布卡片上"
                   />
                 </label>
 
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <div className="text-xs font-medium text-slate-600">知识正文</div>
+                    <div className="text-[11px] text-slate-400">详细解释、方法、例题与运营备注</div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setShowFullEditor(true)}
+                    aria-label="全屏编辑知识正文"
+                    title="全屏编辑"
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </Button>
+                </div>
                 <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                   <div className="flex flex-wrap items-center justify-between gap-1 border-b border-slate-200 bg-white px-2 py-1.5">
                     <div className="flex flex-wrap items-center gap-1">
@@ -1311,43 +1364,102 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block space-y-1.5">
-                    <span className="text-xs font-medium text-slate-500">宽度</span>
-                    <Input
-                      type="number"
-                      min={120}
-                      value={Math.round(selectedNode.width || 160)}
-                      onChange={(event) => updateSelectedNode({ width: Number(event.target.value) || 160 })}
-                      className="h-8"
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-xs font-medium text-slate-500">高度</span>
-                    <Input
-                      type="number"
-                      min={40}
-                      value={Math.round(selectedNode.height || 48)}
-                      onChange={(event) => updateSelectedNode({ height: Number(event.target.value) || 48 })}
-                      className="h-8"
-                    />
-                  </label>
+                <div className="flex items-center gap-3 border-y border-slate-100 py-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#f3efff] text-[#7c6ee6]">
+                    <BookOpen className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-slate-700">练习关联</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      {selectedNodeStats.questionCount} 道题 · {selectedNodeStats.practiceCount} 条作答记录
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 shrink-0 px-2.5 text-xs"
+                    disabled={!onTargetedPractice || selectedNodeStats.questionCount === 0}
+                    onClick={() => onTargetedPractice?.(normalizeKnowledgeNodeId(selectedNode.id))}
+                  >
+                    节点练习
+                  </Button>
                 </div>
 
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="w-full gap-1.5"
-                  onClick={() => deleteNode(selectedNode.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  删除当前节点及子级
-                </Button>
+                <details className="group border-b border-slate-100 pb-2">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 py-2 text-xs font-medium text-slate-600 [&::-webkit-details-marker]:hidden">
+                    <Settings2 className="h-4 w-4 text-slate-400" />
+                    <span>高级设置</span>
+                    <ChevronRight className="ml-auto h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="space-y-3 pb-2 pt-1">
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-slate-500">节点类型</span>
+                      <select
+                        value={selectedNode.node_type}
+                        onChange={(event) => updateSelectedNode({ node_type: event.target.value })}
+                        className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {Object.entries(NODE_TYPE_LABELS).map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div>
+                      <div className="mb-1.5 text-xs font-medium text-slate-500">卡片尺寸</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block space-y-1">
+                          <span className="text-[11px] text-slate-400">宽度</span>
+                          <Input
+                            type="number"
+                            min={120}
+                            value={Math.round(selectedNode.width || 160)}
+                            onChange={(event) => updateSelectedNode({ width: Number(event.target.value) || 160 })}
+                            className="h-8"
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-[11px] text-slate-400">高度</span>
+                          <Input
+                            type="number"
+                            min={40}
+                            value={Math.round(selectedNode.height || 48)}
+                            onChange={(event) => updateSelectedNode({ height: Number(event.target.value) || 48 })}
+                            className="h-8"
+                          />
+                        </label>
+                      </div>
+                      <p className="mt-1.5 text-[11px] leading-4 text-slate-400">通常无需填写，也可以在画布上拖动节点右下角调整。</p>
+                    </div>
+                  </div>
+                </details>
+
+                <details className="group pb-3">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 py-2 text-xs font-medium text-rose-500 [&::-webkit-details-marker]:hidden">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>危险操作</span>
+                    <ChevronRight className="ml-auto h-4 w-4 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="space-y-2 rounded-md bg-rose-50 p-3">
+                    <p className="text-xs leading-5 text-rose-700">
+                      将同时删除当前节点和 {selectedNodeStats.descendantCount} 个子节点，删除前会再次确认。
+                    </p>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-full gap-1.5"
+                      onClick={() => deleteNode(selectedNode.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      删除节点
+                    </Button>
+                  </div>
+                </details>
               </div>
             </ScrollArea>
           ) : (
             <div className="min-h-0 flex-1 p-4 text-sm text-slate-500">
-              选择左侧大纲或右侧画布节点后，可以编辑标题、摘要、正文、类型和节点尺寸。
+              选择左侧大纲或画布节点后，可以编辑卡片摘要和知识正文。
             </div>
           )}
         </div>
@@ -1416,7 +1528,11 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">节点编辑器</h3>
-                  <p>选中左侧大纲或画布节点后，可在右侧固定面板修改标题、摘要和 Markdown 正文；手机端请切换到“文本”。工具栏支持标题、加粗、斜体、列表、引用、代码、图片和预览。</p>
+                  <p>选中左侧大纲或画布节点后，可在右侧固定面板修改标题、卡片摘要和知识正文；手机端请切换到“文本”。正文支持 Markdown、公式、图片、预览和全屏编辑，练习关联会显示该节点的题目与作答数量。</p>
+                </section>
+                <section>
+                  <h3 className="mb-2 font-semibold text-slate-900">高级与删除</h3>
+                  <p>节点类型和卡片尺寸收在“高级设置”中，通常无需修改。删除入口位于“危险操作”，确认窗口会显示子节点和关联练习数量。</p>
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">调整层级</h3>
@@ -1461,6 +1577,80 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           onTargetedPractice={onTargetedPractice}
         />
       </main>
+
+      <Dialog open={showFullEditor && !!selectedNode} onOpenChange={setShowFullEditor}>
+        <DialogContent className="flex max-h-[92vh] max-w-5xl flex-col overflow-hidden">
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-4 pr-8">
+              <div className="min-w-0">
+                <DialogTitle>编辑知识正文</DialogTitle>
+                <p className="mt-1 truncate text-xs text-slate-400">{selectedNodePath.join(' / ')}</p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void saveToNeon(true)}
+                disabled={isSaving || !mindMap}
+                className={cn('shrink-0 gap-1.5', hasChanges && 'bg-amber-600 hover:bg-amber-700')}
+              >
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {isSaving ? '保存中' : hasChanges ? '保存' : '已保存'}
+              </Button>
+            </div>
+          </DialogHeader>
+          {selectedNode && (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
+                <p className="text-xs text-slate-400">支持 Markdown、公式、粘贴图片和截图。</p>
+                <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
+                  <Button
+                    type="button"
+                    variant={textEditorMode === 'write' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => setTextEditorMode('write')}
+                  >
+                    <Edit3 className="h-3 w-3" />
+                    编辑
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={textEditorMode === 'preview' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => setTextEditorMode('preview')}
+                  >
+                    <Eye className="h-3 w-3" />
+                    预览
+                  </Button>
+                </div>
+              </div>
+              {textEditorMode === 'write' ? (
+                <Textarea
+                  value={selectedNode.markdown || ''}
+                  onChange={(event) => updateSelectedNode({ markdown: event.target.value })}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
+                    if (!files.length) return;
+                    event.preventDefault();
+                    void insertImageFiles(files);
+                  }}
+                  className="min-h-[62vh] flex-1 resize-none font-mono text-sm leading-6"
+                  placeholder="在这里编写知识点正文、方法、例题和备注……"
+                />
+              ) : (
+                <ScrollArea className="min-h-[62vh] flex-1 rounded-md border border-slate-200 bg-white p-5">
+                  {selectedNode.markdown ? (
+                    <MarkdownNote>{selectedNode.markdown}</MarkdownNote>
+                  ) : (
+                    <div className="text-sm text-slate-400">暂无正文内容</div>
+                  )}
+                </ScrollArea>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!confirmState} onOpenChange={(open) => !open && setConfirmState(null)}>
         <AlertDialogContent>
