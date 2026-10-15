@@ -4,35 +4,24 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner';
 import {
   AlertTriangle,
-  Bold,
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Code2,
   Edit3,
-  Eye,
   FileText,
   GripVertical,
-  Heading2,
-  Highlighter,
-  ImagePlus,
   HelpCircle,
-  Italic,
-  List,
   Loader2,
   Maximize2,
   Monitor,
   Plus,
-  Quote,
   Save,
   Settings2,
-  Sigma,
   Trash2,
-  Underline,
   X,
 } from 'lucide-react';
 import { MindCanvas } from '@/components/KnowledgeGraph/MindCanvas';
-import { MarkdownNote } from '@/components/KnowledgeGraph/MarkdownNote';
+import { RichTextEditor } from '@/components/KnowledgeGraph/RichTextEditor';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -279,14 +268,11 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
   const [showManual, setShowManual] = useState(false);
   const [showFullEditor, setShowFullEditor] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
-  const [textEditorMode, setTextEditorMode] = useState<'write' | 'preview'>('write');
   const [mobilePane, setMobilePane] = useState<'outline' | 'canvas' | 'text'>('canvas');
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const editorShellRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
-  const markdownTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const changeVersionRef = useRef(0);
   const saveInFlightRef = useRef<Promise<void> | null>(null);
 
@@ -452,67 +438,6 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
     )));
     markChanged();
   }, [markChanged, selectedNodeId]);
-
-  const insertMarkdown = useCallback((before: string, after = '', placeholder = '文本') => {
-    if (!selectedNode) return;
-
-    const textarea = markdownTextareaRef.current;
-    const current = selectedNode.markdown || '';
-    const start = textarea?.selectionStart ?? current.length;
-    const end = textarea?.selectionEnd ?? current.length;
-    const selectedText = current.slice(start, end) || placeholder;
-    const nextText = `${current.slice(0, start)}${before}${selectedText}${after}${current.slice(end)}`;
-
-    updateSelectedNode({ markdown: nextText });
-    setTextEditorMode('write');
-
-    window.requestAnimationFrame(() => {
-      const cursorStart = start + before.length;
-      const cursorEnd = cursorStart + selectedText.length;
-      markdownTextareaRef.current?.focus();
-      markdownTextareaRef.current?.setSelectionRange(cursorStart, cursorEnd);
-    });
-  }, [selectedNode, updateSelectedNode]);
-
-  const insertMarkdownAtCursor = useCallback((text: string) => {
-    if (!selectedNode) return;
-
-    const textarea = markdownTextareaRef.current;
-    const current = selectedNode.markdown || '';
-    const start = textarea?.selectionStart ?? current.length;
-    const end = textarea?.selectionEnd ?? current.length;
-    const nextText = `${current.slice(0, start)}${text}${current.slice(end)}`;
-
-    updateSelectedNode({ markdown: nextText });
-    setTextEditorMode('write');
-
-    window.requestAnimationFrame(() => {
-      const cursor = start + text.length;
-      markdownTextareaRef.current?.focus();
-      markdownTextareaRef.current?.setSelectionRange(cursor, cursor);
-    });
-  }, [selectedNode, updateSelectedNode]);
-
-  const insertImageFiles = useCallback(async (files: FileList | File[]) => {
-    if (!selectedNode) return;
-
-    const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
-    if (!imageFiles.length) return;
-    const oversizedFiles = imageFiles.filter(file => file.size > 2 * 1024 * 1024);
-    if (oversizedFiles.length > 0) {
-      toast.warning('截图过大，请先压缩到 2MB 以内再插入');
-      return;
-    }
-
-    const snippets = await Promise.all(imageFiles.map(file => new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(`\n\n![${file.name || '截图'}](${reader.result})\n\n`);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    })));
-
-    insertMarkdownAtCursor(snippets.join(''));
-  }, [insertMarkdownAtCursor, selectedNode]);
 
   const addNode = useCallback((parentId: string | null) => {
     if (!mindMap) return;
@@ -1267,102 +1192,11 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                     <Maximize2 className="h-4 w-4" />
                   </Button>
                 </div>
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                  <div className="flex flex-wrap items-center justify-between gap-1 border-b border-slate-200 bg-white px-2 py-1.5">
-                    <div className="flex flex-wrap items-center gap-1">
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('## ', '', '小标题')} aria-label="标题">
-                        <Heading2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('**', '**')} aria-label="加粗">
-                        <Bold className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('*', '*')} aria-label="斜体">
-                        <Italic className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('<mark>', '</mark>')} aria-label="高亮">
-                        <Highlighter className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('<u>', '</u>')} aria-label="下划线">
-                        <Underline className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('- ', '', '列表项')} aria-label="列表">
-                        <List className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('> ', '', '引用')} aria-label="引用">
-                        <Quote className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('`', '`', '代码')} aria-label="代码">
-                        <Code2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('$', '$', 'a=b+c')} aria-label="行内公式">
-                        <Sigma className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => insertMarkdown('\n$$\n', '\n$$\n', '增长率=\\frac{现期量-基期量}{基期量}')} aria-label="块级公式">
-                        <span className="text-[11px] font-semibold leading-none">$$</span>
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => imageInputRef.current?.click()} aria-label="插入截图">
-                        <ImagePlus className="h-3.5 w-3.5" />
-                      </Button>
-                      <input
-                        ref={imageInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(event) => {
-                          if (event.target.files) void insertImageFiles(event.target.files);
-                          event.target.value = '';
-                        }}
-                      />
-                    </div>
-                    <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
-                      <Button
-                        type="button"
-                        variant={textEditorMode === 'write' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-6 gap-1 px-2 text-xs"
-                        onClick={() => setTextEditorMode('write')}
-                      >
-                        <Edit3 className="h-3 w-3" />
-                        编辑
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={textEditorMode === 'preview' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-6 gap-1 px-2 text-xs"
-                        onClick={() => setTextEditorMode('preview')}
-                      >
-                        <Eye className="h-3 w-3" />
-                        预览
-                      </Button>
-                    </div>
-                  </div>
-
-                  {textEditorMode === 'write' ? (
-                    <Textarea
-                      ref={markdownTextareaRef}
-                      value={selectedNode.markdown || ''}
-                      onChange={(event) => updateSelectedNode({ markdown: event.target.value })}
-                      onPaste={(event) => {
-                        const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
-                        if (!files.length) return;
-                        event.preventDefault();
-                        void insertImageFiles(files);
-                      }}
-                      className="min-h-48 resize-y rounded-none border-0 bg-white font-mono text-xs shadow-none focus-visible:ring-0"
-                      placeholder="在这里写正文、知识点解释、例题方法、运营备注。支持 Markdown、$公式$、高亮、下划线和截图。"
-                    />
-                  ) : (
-                    <div className="min-h-48 bg-white p-3 text-sm">
-                      {selectedNode.markdown ? (
-                        <MarkdownNote>{selectedNode.markdown}</MarkdownNote>
-                      ) : (
-                        <div className="text-sm text-slate-400">暂无正文内容</div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <RichTextEditor
+                  key={selectedNode.id}
+                  value={selectedNode.markdown || ''}
+                  onChange={(markdown) => updateSelectedNode({ markdown })}
+                />
 
                 <div className="flex items-center gap-3 border-y border-slate-100 py-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#f3efff] text-[#7c6ee6]">
@@ -1528,7 +1362,7 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">节点编辑器</h3>
-                  <p>选中左侧大纲或画布节点后，可在右侧固定面板修改标题、卡片摘要和知识正文；手机端请切换到“文本”。正文支持 Markdown、公式、图片、预览和全屏编辑，练习关联会显示该节点的题目与作答数量。</p>
+                  <p>选中左侧大纲或画布节点后，可在右侧固定面板修改标题、卡片摘要和知识正文；手机端请切换到“文本”。正文采用所见即所得编辑，选中文字即可设置标题、加粗、高亮、列表、引用和链接，也支持图片粘贴与全屏编辑。</p>
                 </section>
                 <section>
                   <h3 className="mb-2 font-semibold text-slate-900">高级与删除</h3>
@@ -1600,53 +1434,14 @@ export function MindEditor({ mindMap: initialMindMap, nodes: initialNodes, edges
           </DialogHeader>
           {selectedNode && (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
-                <p className="text-xs text-slate-400">支持 Markdown、公式、粘贴图片和截图。</p>
-                <div className="flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
-                  <Button
-                    type="button"
-                    variant={textEditorMode === 'write' ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
-                    onClick={() => setTextEditorMode('write')}
-                  >
-                    <Edit3 className="h-3 w-3" />
-                    编辑
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={textEditorMode === 'preview' ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className="h-7 gap-1 px-2 text-xs"
-                    onClick={() => setTextEditorMode('preview')}
-                  >
-                    <Eye className="h-3 w-3" />
-                    预览
-                  </Button>
-                </div>
-              </div>
-              {textEditorMode === 'write' ? (
-                <Textarea
-                  value={selectedNode.markdown || ''}
-                  onChange={(event) => updateSelectedNode({ markdown: event.target.value })}
-                  onPaste={(event) => {
-                    const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
-                    if (!files.length) return;
-                    event.preventDefault();
-                    void insertImageFiles(files);
-                  }}
-                  className="min-h-[62vh] flex-1 resize-none font-mono text-sm leading-6"
-                  placeholder="在这里编写知识点正文、方法、例题和备注……"
-                />
-              ) : (
-                <ScrollArea className="min-h-[62vh] flex-1 rounded-md border border-slate-200 bg-white p-5">
-                  {selectedNode.markdown ? (
-                    <MarkdownNote>{selectedNode.markdown}</MarkdownNote>
-                  ) : (
-                    <div className="text-sm text-slate-400">暂无正文内容</div>
-                  )}
-                </ScrollArea>
-              )}
+              <p className="mb-2 text-xs text-slate-400">所见即所得编辑，支持标题、列表、链接、高亮、图片粘贴和撤销重做。</p>
+              <RichTextEditor
+                key={`fullscreen-${selectedNode.id}`}
+                value={selectedNode.markdown || ''}
+                onChange={(markdown) => updateSelectedNode({ markdown })}
+                className="min-h-0 flex-1"
+                minHeight="62vh"
+              />
             </div>
           )}
         </DialogContent>
