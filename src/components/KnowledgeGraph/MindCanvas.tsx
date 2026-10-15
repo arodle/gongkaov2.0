@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Focus,
   X,
   BookOpen,
   Search,
@@ -205,6 +206,7 @@ export function MindCanvas({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autoFitKeyRef = useRef('');
   const focusFilterFitKeyRef = useRef('');
+  const focusedBranchFitKeyRef = useRef('');
   const settingsReadyMapIdRef = useRef<string | null>(null);
   const lastSavedSettingsJsonRef = useRef('');
   const previousLayoutDirectionRef = useRef<LayoutDirection | null>(null);
@@ -226,6 +228,8 @@ export function MindCanvas({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExamPaper, setSelectedExamPaper] = useState('');
   const [focusFilterMode, setFocusFilterMode] = useState<FocusFilterMode>('all');
+  const [focusedBranchId, setFocusedBranchId] = useState<string | null>(null);
+  const [manuallyExpandedNodes, setManuallyExpandedNodes] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(!initialNodes?.length);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
@@ -384,6 +388,31 @@ export function MindCanvas({
   const nodeById = useMemo(() => {
     return new Map(nodes.map(node => [node.id, node]));
   }, [nodes]);
+
+  const treeNodeById = useMemo(() => {
+    const result = new Map<string, TreeNode>();
+    const visit = (treeNode: TreeNode) => {
+      result.set(treeNode.node.id, treeNode);
+      treeNode.children.forEach(visit);
+    };
+    treeData.forEach(visit);
+    return result;
+  }, [treeData]);
+
+  const focusedBranchPath = useMemo(() => {
+    if (!focusedBranchId) return [];
+    const path: MapNodeRecord[] = [];
+    let current = nodeById.get(focusedBranchId);
+    const visited = new Set<string>();
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      path.unshift(current);
+      current = current.parent_id ? nodeById.get(current.parent_id) : undefined;
+    }
+
+    return path;
+  }, [focusedBranchId, nodeById]);
 
   const childCountById = useMemo(() => {
     const counts = new Map<string, number>();
@@ -614,37 +643,35 @@ function getMinimumScaleForDepth(depth: number): number {
 }
 
 const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: number): { width: number; height: number } => {
-  // 根据标题长度和操作区预留空间估算节点宽度。
   const textLen = node.name.length;
-  const textWidth = Math.min(MAX_NODE_WIDTH, Math.max(MIN_NODE_WIDTH, textLen * 12 + 60));
+  const overviewMode = currentScale < 0.62;
+  const titleFontSize = overviewMode ? 22 : currentScale < 0.82 ? 17 : 14;
+  const lineHeight = overviewMode ? 28 : currentScale < 0.82 ? 23 : 20;
+  const maxTitleLines = overviewMode ? 1 : 2;
+  const titleWidth = Math.min(textLen, overviewMode ? 12 : 16) * titleFontSize + 76;
+  const textWidth = Math.min(MAX_NODE_WIDTH, Math.max(MIN_NODE_WIDTH, titleWidth));
   const width = Math.max(textWidth, node.width || MIN_NODE_WIDTH);
+  const titleSpace = Math.max(40, width - 76);
+  const charsPerLine = Math.max(1, Math.floor(titleSpace / titleFontSize));
+  const titleLines = Math.min(maxTitleLines, Math.max(1, Math.ceil(textLen / charsPerLine)));
+  let totalHeight = titleLines * lineHeight + 24;
 
-  // 缩放较小时只保留标题单行高度，避免节点占屏过多。
-  if (currentScale <= 0.7) {
-    return { width, height: Math.max(MIN_NODE_HEIGHT, node.height || MIN_NODE_HEIGHT) };
-  }
-  
-  // 根据标题折行、内容和笔记预览估算节点高度。
-  const charsPerLine = Math.floor((width - 60) / 12);
-  const titleLines = Math.min(3, Math.max(1, Math.ceil(textLen / charsPerLine)));
-  let totalHeight = titleLines * 20 + 24;
-
-  if (node.content) {
-    totalHeight += 54;
-  }
-  
-  if (node.markdown && !showNotebook) {
-    totalHeight += 48; // 给 Markdown 预览留出固定空间。
-  }
+  if (currentScale >= 1.05 && node.content) totalHeight += 52;
+  if (currentScale >= 1.05 && node.markdown && !showNotebook) totalHeight += 48;
+  if (currentScale >= 0.82 && (questionCountByNodeId.get(node.id) || 0) > 0) totalHeight += 22;
   
   return { width, height: Math.max(totalHeight, MIN_NODE_HEIGHT, node.height || MIN_NODE_HEIGHT) };
-}, [showNotebook]);
+}, [questionCountByNodeId, showNotebook]);
 
   const visibleTreeData = useMemo((): TreeNode[] => {
     const cloneToDepth = (treeNode: TreeNode, depth: number, maxDepth: number): TreeNode | null => {
       if (focusVisibleNodeIds && !focusVisibleNodeIds.has(treeNode.node.id)) return null;
 
-      const canShowChildren = depth < maxDepth && expandedNodes.has(treeNode.node.id);
+      const canShowChildren = expandedNodes.has(treeNode.node.id) && (
+        depth < maxDepth
+        || manuallyExpandedNodes.has(treeNode.node.id)
+        || focusedBranchId === treeNode.node.id
+      );
 
       return {
         node: treeNode.node,
@@ -656,10 +683,16 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       };
     };
 
-    return treeData
-      .map(root => cloneToDepth(root, 0, getVisibleDepthForScale(scale)))
+    const focusedTree = focusedBranchId ? treeNodeById.get(focusedBranchId) : null;
+    const sourceTrees = focusedTree ? [focusedTree] : treeData;
+    const visibleDepth = focusedTree
+      ? Math.max(2, getVisibleDepthForScale(scale))
+      : getVisibleDepthForScale(scale);
+
+    return sourceTrees
+      .map(root => cloneToDepth(root, 0, visibleDepth))
       .filter((root): root is TreeNode => root !== null);
-  }, [treeData, expandedNodes, focusVisibleNodeIds, scale]);
+  }, [treeData, expandedNodes, focusVisibleNodeIds, focusedBranchId, manuallyExpandedNodes, scale, treeNodeById]);
 
   const visibleChildCountById = useMemo(() => {
     const counts = new Map<string, number>();
@@ -853,8 +886,9 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     return `M ${fx} ${fy} C ${fx + direction * controlOffset} ${fy}, ${tx - direction * controlOffset} ${ty}, ${tx} ${ty}`;
   }, [edgeStyle, layoutDirection]);
 
-  const isShowDetail = useMemo(() => scale > 0.7, [scale]);
-  const isCompactMode = useMemo(() => scale < 0.5, [scale]);
+  const isOverviewMode = useMemo(() => scale < 0.62, [scale]);
+  const isShowDetail = useMemo(() => scale >= 1.05, [scale]);
+  const isCompactMode = useMemo(() => scale < 0.82, [scale]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -1019,7 +1053,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     const contentHeight = Math.max(1, maxY - minY);
     const padding = 96;
     const nextScale = Math.max(
-      0.25,
+      focusedBranchId ? 0.72 : 0.5,
       Math.min(1.4, Math.min((rect.width - padding) / contentWidth, (rect.height - padding) / contentHeight)),
     );
 
@@ -1030,26 +1064,36 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
     });
     setSelectedNode(null);
     setShowNotebook(false);
-  }, [calculateNodePositions]);
+  }, [calculateNodePositions, focusedBranchId]);
 
   const expandAll = useCallback(() => {
     setFocusFilterMode('all');
     setExpandedNodes(new Set(nodes.map(node => node.id)));
+    setManuallyExpandedNodes(new Set(nodes.map(node => node.id)));
   }, [nodes]);
 
   const collapseToRoots = useCallback(() => {
     setFocusFilterMode('all');
+    setFocusedBranchId(null);
+    setManuallyExpandedNodes(new Set());
     setExpandedNodes(new Set(nodes.filter(node => !node.parent_id).map(node => node.id)));
     setSelectedNode(null);
     setShowNotebook(false);
   }, [nodes]);
 
-  const toggleExpand = useCallback((nodeId: string) => {
+  const toggleExpand = useCallback((nodeId: string, forceExpand?: boolean) => {
     setExpandedNodes(prev => {
       const newSet = new Set(prev);
-      const shouldExpand = !newSet.has(nodeId);
+      const shouldExpand = forceExpand ?? !newSet.has(nodeId);
       if (shouldExpand) newSet.add(nodeId);
       else newSet.delete(nodeId);
+
+      setManuallyExpandedNodes(current => {
+        const next = new Set(current);
+        if (shouldExpand) next.add(nodeId);
+        else next.delete(nodeId);
+        return next;
+      });
 
       if (shouldExpand) {
         const depth = nodeDepthById.get(nodeId) ?? 0;
@@ -1063,14 +1107,24 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
 
   const toggleSelectedNode = useCallback(() => {
     if (!selectedNode || !childCountById.has(selectedNode.id)) return;
-    toggleExpand(selectedNode.id);
-  }, [selectedNode, childCountById, toggleExpand]);
+    toggleExpand(selectedNode.id, (visibleChildCountById.get(selectedNode.id) || 0) === 0);
+  }, [selectedNode, childCountById, toggleExpand, visibleChildCountById]);
 
   const handleNodeClick = useCallback((node: MapNodeRecord) => {
     setSelectedNode(node);
     onSelectNode?.(node);
     setShowNotebook(!!(node.markdown && scale > 0.7));
   }, [scale, onSelectNode]);
+
+  const focusBranch = useCallback((node: MapNodeRecord) => {
+    if (!childCountById.has(node.id)) return;
+    setFocusFilterMode('all');
+    setFocusedBranchId(node.id);
+    setExpandedNodes(current => new Set([...current, node.id]));
+    setManuallyExpandedNodes(current => new Set([...current, node.id]));
+    setSelectedNode(null);
+    setShowNotebook(false);
+  }, [childCountById]);
 
   const startResize = useCallback((e: React.MouseEvent, pos: PositionedNode) => {
     e.preventDefault();
@@ -1097,6 +1151,15 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       return () => window.clearTimeout(timer);
     }
   }, [isLoading, nodes.length, mindMap?.id, handleFitView]);
+
+  useEffect(() => {
+    if (isLoading || nodes.length === 0) return;
+    const fitKey = focusedBranchId || 'all';
+    if (focusedBranchFitKeyRef.current === fitKey) return;
+    focusedBranchFitKeyRef.current = fitKey;
+    const timer = window.setTimeout(handleFitView, 80);
+    return () => window.clearTimeout(timer);
+  }, [focusedBranchId, handleFitView, isLoading, nodes.length]);
 
   useEffect(() => {
     if (focusFilterMode === 'all') return;
@@ -1163,6 +1226,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
       }
 
       if (event.key === 'Escape') {
+        if (focusedBranchId) setFocusedBranchId(null);
         setSelectedNode(null);
         setShowNotebook(false);
         setResizeState(null);
@@ -1195,7 +1259,7 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleZoomIn, handleZoomOut, handleFitView, toggleSelectedNode, expandAll, collapseToRoots]);
+  }, [focusedBranchId, handleZoomIn, handleZoomOut, handleFitView, toggleSelectedNode, expandAll, collapseToRoots]);
 
   const miniMapData = useMemo(() => {
     const positionedNodes = Array.from(calculateNodePositions.values());
@@ -1449,6 +1513,35 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
               ))}
               </div>
             </div>
+            {focusedBranchId && (
+              <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-slate-100 pt-2 text-xs text-slate-500">
+                <Focus className="h-3.5 w-3.5 shrink-0 text-[#a49aff]" />
+                <button
+                  type="button"
+                  className="shrink-0 rounded px-1.5 py-1 hover:bg-[#f4efff] hover:text-[#5e5394]"
+                  onClick={() => setFocusedBranchId(null)}
+                >
+                  全图
+                </button>
+                {focusedBranchPath.map(pathNode => (
+                  <React.Fragment key={pathNode.id}>
+                    <ChevronRight className="h-3 w-3 shrink-0 text-slate-300" />
+                    <button
+                      type="button"
+                      className={cn(
+                        'max-w-[12rem] shrink-0 truncate rounded px-1.5 py-1 hover:bg-[#f4efff] hover:text-[#5e5394]',
+                        pathNode.id === focusedBranchId && 'bg-[#f4efff] font-medium text-[#5e5394]'
+                      )}
+                      title={pathNode.name}
+                      disabled={pathNode.id === focusedBranchId}
+                      onClick={() => focusBranch(pathNode)}
+                    >
+                      {pathNode.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
             {searchQuery && searchResults.length > 0 && (
               <div className="mt-1.5 flex gap-1 overflow-x-auto pb-0.5 md:mt-2 md:pb-1">
                 {searchResults.slice(0, 10).map(node => (
@@ -1588,6 +1681,8 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                     backgroundColor: selected ? "#EFF6FF" : nodeBg, 
                     borderLeft: `4px solid ${nodeBorder}`,
                   }}
+                  title={`${node.name} · ${c.label}`}
+                  aria-label={`${node.name}，${c.label}`}
                   initial={{ opacity: 0, scale: 0.9 }} 
                   animate={{ opacity: 1, scale: 1 }} 
                   whileHover={{ 
@@ -1597,12 +1692,16 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                   }}
                   transition={{ type: "spring", stiffness: 380, damping: 20 }}
                   onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleNodeClick(node); }}
+                  onDoubleClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    focusBranch(node);
+                  }}
                 >
-                  <div className="h-full flex flex-col justify-start p-3 overflow-hidden select-none">
+                  <div className={cn("h-full flex flex-col justify-start overflow-hidden select-none", isOverviewMode ? "p-2.5" : "p-3")}>
                     <div className="flex items-start gap-2 w-full">
                       {hasChild && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); toggleExpand(node.id); }}
+                          onClick={(e) => { e.stopPropagation(); toggleExpand(node.id, !expanded); }}
                           className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-colors hover:bg-slate-200/50"
                         >
                           {expanded ? (
@@ -1616,25 +1715,21 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                       <div className="w-2 h-2 rounded-full flex-shrink-0 mt-1" style={{ backgroundColor: c.dot }} />
                       <div className="flex-1 min-w-0">
                         <span
-                          className={cn("font-medium break-words whitespace-normal leading-tight block", isCompactMode ? "text-xs" : "text-[14px]")}
-                          style={{ color: c.text }}
+                          className="block overflow-hidden break-words whitespace-normal font-medium"
+                          style={{
+                            color: c.text,
+                            display: '-webkit-box',
+                            WebkitBoxOrient: 'vertical',
+                            WebkitLineClamp: isOverviewMode ? 1 : 2,
+                            fontSize: isOverviewMode ? 22 : isCompactMode ? 17 : 14,
+                            lineHeight: isOverviewMode ? '28px' : isCompactMode ? '23px' : '20px',
+                          }}
                         >
                           {node.name}
                         </span>
                       </div>
-                      {!isCompactMode && (
-                        <Badge
-                          variant="outline"
-                          className="ml-auto text-[10px] px-1.5 py-0 flex-shrink-0 mt-0.5"
-                          style={{ borderColor: c.border, color: c.text, backgroundColor: c.bg }}
-                        >
-                          {c.label}
-                        </Badge>
-                      )}
                       {node.markdown && !isCompactMode && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-blue-50/80 text-blue-600 border-blue-200 flex-shrink-0 mt-0.5">
-                          <FileText className="w-3 h-3 mr-0.5" />笔记
-                        </Badge>
+                        <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" aria-label="有笔记" />
                       )}
                     </div>
 
@@ -1833,6 +1928,18 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
                 </Button>
               </div>
               <ScrollArea className="flex-1 p-4">
+                {childCountById.has(selectedNode.id) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mb-4 w-full border-[#ded6ff] text-[#5e5394] hover:bg-[#f4efff]"
+                    onClick={() => focusBranch(selectedNode)}
+                  >
+                    <Focus className="mr-1.5 h-4 w-4" />
+                    聚焦此知识分支
+                  </Button>
+                )}
                 {selectedMastery && (
                   <div className="mb-4 rounded-xl border p-3" style={{ borderColor: selectedMastery.border, backgroundColor: selectedMastery.bg }}>
                     <div className="mb-2 flex items-center justify-between gap-2">
