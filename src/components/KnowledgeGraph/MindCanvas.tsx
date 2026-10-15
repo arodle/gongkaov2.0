@@ -1597,7 +1597,11 @@ const calculateNodeDimensions = useCallback((node: MapNodeRecord, currentScale: 
         {/* SVG 杩炵嚎鐢诲竷 */}
         <div className="absolute inset-0 pointer-events-none" style={{ transformOrigin: '0 0' }}>
           <div style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` }}>
-            <svg className="absolute pointer-events-none" style={{ width: '20000px', height: '20000px' }}>
+            <svg
+              className="absolute pointer-events-none overflow-visible"
+              style={{ width: '1px', height: '1px', overflow: 'visible' }}
+              aria-hidden="true"
+            >
               {generateEdges.map((edge, i) => {
                 return (
                   <path 
